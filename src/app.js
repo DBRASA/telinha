@@ -35,7 +35,6 @@ const state = {
   quality: QUALITY['1080p30'],
   bitrateTimer: null,
   statusTimer: null,
-  failed: new Set(), // pessoas encontradas, mas sem conexão
 };
 
 // ---------- Utilidades ----------
@@ -47,6 +46,17 @@ function colorFor(name) {
   return `hsl(${h} 55% 45%)`;
 }
 const nameOf = (id) => state.peers.get(id)?.name || 'Conectando...';
+
+const svg = (body) => `<svg class="ico" viewBox="0 0 24 24">${body}</svg>`;
+const ICON = {
+  monitor: svg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'),
+  stop: svg('<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>'),
+  volume: svg('<path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>'),
+  fullscreen: svg('<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>'),
+  close: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
+  play: svg('<path d="M7 4.5v15l12-7.5z" fill="currentColor"/>'),
+  users: svg('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'),
+};
 
 // ---------- Entrada ----------
 $('#name').value = load('name');
@@ -68,11 +78,7 @@ function enterRoom(name) {
   const config = { appId: APP_ID, password: PASSWORD, relayConfig: { redundancy: 8 } };
   if (TURN_SERVERS.length) config.turnConfig = TURN_SERVERS;
   const room = joinRoom(config, ROOM_ID, {
-    onJoinError: ({ error, peerId }) => {
-      console.warn('Erro ao conectar com alguém:', error);
-      state.failed.add(peerId);
-      updateStatus();
-    },
+    onJoinError: ({ error }) => console.warn('Erro ao conectar com alguém:', error),
   });
   state.room = room;
   state.statusTimer = setInterval(updateStatus, 1000);
@@ -114,7 +120,6 @@ function enterRoom(name) {
   });
 
   room.onPeerJoin = (peerId) => {
-    state.failed.delete(peerId);
     if (!state.peers.has(peerId)) state.peers.set(peerId, { sharing: false });
     sendHello(peerId);
     renderPeople();
@@ -157,22 +162,11 @@ function checkFull() {
   }
 }
 
-// Diagnóstico: servidores de busca conectados e pessoas que não conseguimos alcançar.
+// Diagnóstico: só aparece se nenhum servidor de busca conectar (depois de 5 s, pra não piscar ao entrar).
 function updateStatus() {
-  const el = $('#status');
   const sockets = Object.values(getRelaySockets?.() || {});
-  const online = sockets.filter((s) => s?.readyState === WebSocket.OPEN).length;
-  const failed = state.failed.size;
-  if (!online) {
-    el.className = 'status bad';
-    el.textContent = 'Sem conexão com os servidores de busca. Confira a internet, o firewall ou o antivírus.';
-  } else if (failed) {
-    el.className = 'status bad';
-    el.textContent = `Achei ${failed} pessoa(s), mas a rede bloqueou a conexão. É preciso configurar um servidor TURN.`;
-  } else {
-    el.className = 'status ok';
-    el.textContent = `Online · ${online}/${sockets.length} servidores de busca`;
-  }
+  const online = sockets.some((s) => s?.readyState === WebSocket.OPEN);
+  $('#status').hidden = online || Date.now() - state.joinedAt < 5000;
 }
 
 function leaveRoom() {
@@ -181,14 +175,12 @@ function leaveRoom() {
   state.room?.leave();
   state.room = state.hello = state.share = state.watch = null;
   state.peers.clear();
-  state.failed.clear();
   state.watching.clear();
   document.querySelectorAll('#stage .tile').forEach((t) => t.remove());
   $('#room').hidden = true;
   $('#lobby').hidden = false;
 }
 
-$('#leave').onclick = leaveRoom;
 window.addEventListener('beforeunload', () => state.room?.leave());
 
 // ---------- Compartilhar ----------
@@ -196,7 +188,7 @@ $('#share').onclick = () => (state.localStream ? stopShare() : openPicker());
 
 function updateShareButton() {
   const btn = $('#share');
-  btn.textContent = state.localStream ? 'Parar de compartilhar' : 'Compartilhar tela';
+  btn.innerHTML = state.localStream ? `${ICON.stop} Parar de compartilhar` : `${ICON.monitor} Compartilhar tela`;
   btn.className = state.localStream ? 'danger' : 'primary';
 }
 
@@ -397,12 +389,12 @@ function showTile(id, label, stream, isLocal) {
     tile.id = 'tile-' + id;
     tile.innerHTML = `
       <video autoplay playsinline></video>
+      <div class="tile-top"><span class="pill"><i class="dot"></i><span class="tile-name"></span></span></div>
       <div class="tile-bar">
-        <span class="tile-name"></span><span class="live">AO VIVO</span>
         <span class="spacer"></span>
-        ${isLocal ? '' : '<input class="vol" type="range" min="0" max="1" step="0.01" value="1" title="Volume">'}
-        <button class="fs" title="Tela cheia">⛶</button>
-        ${isLocal ? '' : '<button class="unwatch" title="Parar de assistir">✕</button>'}
+        ${isLocal ? '' : `<label class="vol-wrap" title="Volume">${ICON.volume}<input class="vol" type="range" min="0" max="1" step="0.01" value="1"></label>`}
+        <button class="icon-btn fs" title="Tela cheia">${ICON.fullscreen}</button>
+        ${isLocal ? '' : `<button class="icon-btn unwatch" title="Parar de assistir">${ICON.close}</button>`}
       </div>`;
     const video = tile.querySelector('video');
     const vol = tile.querySelector('.vol');
@@ -413,6 +405,15 @@ function showTile(id, label, stream, isLocal) {
     if (stop) stop.onclick = () => unwatch(id);
     video.ondblclick = toggleFs;
     video.onclick = () => tile.classList.toggle('focused');
+    // Tela cheia: mostra a barra ao mexer o mouse e esconde depois de 2,5 s parado.
+    let hideTimer = null;
+    tile.onmousemove = () => {
+      tile.classList.add('show-bar');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        if (!tile.querySelector('.tile-bar:hover')) tile.classList.remove('show-bar');
+      }, 2500);
+    };
     const card = document.getElementById('card-' + id);
     if (card) card.replaceWith(tile); // o vídeo entra no lugar do cartão
     else $('#stage').append(tile);
@@ -434,6 +435,7 @@ function updateMyTileLabel() {
   const el = document.querySelector(`#tile-${CSS.escape(selfId)} .tile-name`);
   const n = state.viewers.size;
   if (el) el.textContent = `${state.myName} (você)` + (n ? ` · ${n} assistindo` : '');
+  renderPeople(); // atualiza "Ao vivo · N assistindo" no meu painel
 }
 
 function removeTile(id) {
@@ -452,12 +454,15 @@ function renderLiveCards() {
     el.className = 'tile live-card';
     el.id = 'card-' + id;
     el.innerHTML = `
+      <div class="glow"></div>
       <span class="avatar big"></span>
-      <p><b class="pname"></b> está <span class="live">AO VIVO</span></p>
-      <button class="primary">Assistir</button>`;
+      <div class="live-name"><b class="pname"></b><span class="live">AO VIVO</span></div>
+      <p class="hint">está compartilhando a tela</p>
+      <button class="primary">${ICON.play} Assistir</button>`;
     const avatar = el.querySelector('.avatar');
     avatar.textContent = nameOf(id)[0].toUpperCase();
     avatar.style.background = colorFor(nameOf(id));
+    el.style.setProperty('--c', colorFor(nameOf(id)));
     el.querySelector('.pname').textContent = nameOf(id);
     el.querySelector('button').onclick = () => watch(id);
     $('#stage').append(el);
@@ -469,39 +474,64 @@ function renderLiveCards() {
 
 function updateEmpty() {
   const empty = $('#empty');
-  empty.hidden = !!document.querySelector('#stage .tile');
-  empty.innerHTML = state.peers.size
-    ? 'Ninguém está compartilhando ainda.<br>Clique em <b>Compartilhar tela</b> pra começar.'
-    : 'Esperando seus amigos entrarem...<br>Você já pode compartilhar enquanto isso.';
+  const tiles = document.querySelectorAll('#stage .tile').length;
+  $('#stage').dataset.count = tiles;
+  empty.hidden = tiles > 0;
+  empty.innerHTML = ICON.monitor + (state.peers.size
+    ? '<p>Ninguém está ao vivo ainda.<br>Clique em <b>Compartilhar tela</b> pra começar.</p>'
+    : '<p>Esperando seus amigos entrarem...<br>Você já pode compartilhar enquanto isso.</p>');
+}
+
+function personRow(p) {
+  const li = document.createElement('li');
+  const isMe = p.id === selfId;
+  const watching = state.watching.has(p.id);
+  const badge = !p.sharing ? '' : watching
+    ? '<span class="live watching">ASSISTINDO</span>'
+    : '<span class="live">AO VIVO</span>';
+  li.innerHTML = `<span class="avatar"></span><span class="pname"></span>${badge}`;
+  const avatar = li.querySelector('.avatar');
+  avatar.textContent = p.name[0].toUpperCase();
+  avatar.style.background = colorFor(p.name);
+  avatar.classList.toggle('ring', p.sharing);
+  li.querySelector('.pname').textContent = p.name;
+  li.classList.toggle('is-live', p.sharing);
+  if (p.sharing && !isMe) {
+    li.classList.add('clickable');
+    li.title = watching ? 'Clique pra parar de assistir' : 'Clique pra assistir';
+    li.onclick = () => (watching ? unwatch(p.id) : watch(p.id));
+  }
+  return li;
 }
 
 function renderPeople() {
-  const list = $('#people');
-  list.innerHTML = '';
+  const box = $('#people');
+  box.innerHTML = '';
   const everyone = [
     { id: selfId, name: `${state.myName} (você)`, sharing: !!state.localStream },
     ...[...state.peers.keys()].map((id) => ({ id, name: nameOf(id), sharing: state.peers.get(id).sharing })),
   ];
-  for (const p of everyone) {
-    const li = document.createElement('li');
-    const isMe = p.id === selfId;
-    const watching = state.watching.has(p.id);
-    const badge = !p.sharing ? '' : watching
-      ? '<span class="live watching">ASSISTINDO</span>'
-      : '<span class="live">AO VIVO</span>';
-    li.innerHTML = `<span class="avatar"></span><span class="pname"></span>${badge}`;
-    const avatar = li.querySelector('.avatar');
-    avatar.textContent = p.name[0].toUpperCase();
-    avatar.style.background = colorFor(p.name);
-    li.querySelector('.pname').textContent = p.name;
-    if (p.sharing && !isMe) {
-      li.classList.add('clickable');
-      li.title = watching ? 'Clique pra parar de assistir' : 'Clique pra assistir';
-      li.onclick = () => (watching ? unwatch(p.id) : watch(p.id));
-    }
-    list.append(li);
+  // Ao vivo primeiro, depois o resto da sala (como os canais de voz do Discord).
+  for (const [title, group] of [['Ao vivo', everyone.filter((p) => p.sharing)], ['Na sala', everyone.filter((p) => !p.sharing)]]) {
+    if (!group.length) continue;
+    const header = document.createElement('p');
+    header.className = 'section';
+    header.textContent = `${title} — ${group.length}`;
+    const ul = document.createElement('ul');
+    group.forEach((p) => ul.append(personRow(p)));
+    box.append(header, ul);
   }
-  $('#count').textContent = `${everyone.length}/${MAX_PEOPLE}`;
+
+  // Meu painel embaixo da barra lateral.
+  const me = $('#me-avatar');
+  me.textContent = state.myName[0]?.toUpperCase() || '?';
+  me.style.background = colorFor(state.myName);
+  $('#me-name').textContent = state.myName;
+  const meState = $('#me-state');
+  meState.textContent = state.localStream ? `Ao vivo${state.viewers.size ? ` · ${state.viewers.size} assistindo` : ''}` : 'Na sala';
+  meState.classList.toggle('on', !!state.localStream);
+
+  $('#count').innerHTML = `${ICON.users} ${everyone.length}/${MAX_PEOPLE}`;
   renderLiveCards();
   updateEmpty();
 }

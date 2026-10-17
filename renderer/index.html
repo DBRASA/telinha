@@ -11,14 +11,15 @@
   <!-- Entrada -->
   <section id="lobby">
     <div class="card">
+      <img class="logo" src="icon.png" alt="">
       <h1>Telinha</h1>
       <p class="sub">Compartilhe a tela com som para até 5 amigos</p>
 
       <label>Seu nick
-        <input id="name" maxlength="32" placeholder="Como te chamam?">
+        <input id="name" maxlength="32" placeholder="Como te chamam?" autocomplete="off">
       </label>
 
-      <button id="go" class="primary big">Entrar</button>
+      <button id="go" class="primary big">Entrar na sala</button>
       <p id="lobby-error" class="error"></p>
     </div>
   </section>
@@ -26,29 +27,41 @@
   <!-- Sala -->
   <section id="room" hidden>
     <aside>
-      <div class="room-head">
-        <h2>Sala</h2>
-        <span id="count" class="count"></span>
+      <div class="brand">
+        <img src="icon.png" alt="">
+        <div><b>Telinha</b><span>Sala principal</span></div>
       </div>
 
-      <p id="status" class="status">Conectando...</p>
+      <p id="status" class="status" hidden>Sem conexão com os servidores de busca. Confira a internet, o firewall ou o antivírus.</p>
 
-      <ul id="people"></ul>
+      <div id="people"></div>
 
-      <div class="controls">
-        <button id="share" class="primary">Compartilhar tela</button>
-        <button id="leave" class="danger">Sair da sala</button>
+      <div class="me">
+        <div class="me-info">
+          <span id="me-avatar" class="avatar"></span>
+          <div class="me-text"><b id="me-name"></b><span id="me-state"></span></div>
+        </div>
+        <button id="share" class="primary"></button>
       </div>
     </aside>
 
-    <main id="stage">
-      <div id="empty"></div>
+    <main>
+      <header class="topbar">
+        <h2>
+          <svg class="ico" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          Sala principal
+        </h2>
+        <span id="count" class="count"></span>
+      </header>
+      <div id="stage">
+        <div id="empty"></div>
+      </div>
     </main>
   </section>
 
   <!-- Seletor de tela -->
   <dialog id="picker">
-    <h3>Escolha o que compartilhar</h3>
+    <h3 tabindex="-1" autofocus>Escolha o que compartilhar</h3>
     <div class="tabs" id="kind-tabs">
       <button class="tab active" data-kind="screen">Telas</button>
       <button class="tab" data-kind="window">Janelas</button>
@@ -68,7 +81,10 @@
     </div>
     <div class="picker-actions">
       <button id="picker-cancel">Cancelar</button>
-      <button id="picker-go" class="primary" disabled>Ao vivo</button>
+      <button id="picker-go" class="live-btn" disabled>
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19 5a10 10 0 0 1 0 14M5 19A10 10 0 0 1 5 5"/></svg>
+        Entrar ao vivo
+      </button>
     </div>
   </dialog>
 
