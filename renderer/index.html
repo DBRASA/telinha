@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src ws: wss:; style-src 'self'; script-src 'self'">
+  <title>Telinha</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Entrada -->
+  <section id="lobby">
+    <div class="card">
+      <h1>Telinha</h1>
+      <p class="sub">Compartilhe a tela com som para até 5 amigos</p>
+
+      <label>Seu nick
+        <input id="name" maxlength="32" placeholder="Como te chamam?">
+      </label>
+
+      <button id="go" class="primary big">Entrar</button>
+      <p id="lobby-error" class="error"></p>
+    </div>
+  </section>
+
+  <!-- Sala -->
+  <section id="room" hidden>
+    <aside>
+      <div class="room-head">
+        <h2>Sala</h2>
+        <span id="count" class="count"></span>
+      </div>
+
+      <p id="status" class="status">Conectando...</p>
+
+      <ul id="people"></ul>
+
+      <div class="controls">
+        <button id="share" class="primary">Compartilhar tela</button>
+        <button id="leave" class="danger">Sair da sala</button>
+      </div>
+    </aside>
+
+    <main id="stage">
+      <div id="empty"></div>
+    </main>
+  </section>
+
+  <!-- Seletor de tela -->
+  <dialog id="picker">
+    <h3>Escolha o que compartilhar</h3>
+    <div class="tabs" id="kind-tabs">
+      <button class="tab active" data-kind="screen">Telas</button>
+      <button class="tab" data-kind="window">Janelas</button>
+    </div>
+    <div id="sources"></div>
+    <div class="picker-opts">
+      <label>Qualidade
+        <select id="quality">
+          <option value="720p30">720p · 30 fps</option>
+          <option value="1080p30" selected>1080p · 30 fps</option>
+          <option value="1080p60">1080p · 60 fps</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="with-audio" checked> Compartilhar som do PC</label>
+    </div>
+    <div class="picker-actions">
+      <button id="picker-cancel">Cancelar</button>
+      <button id="picker-go" class="primary" disabled>Ao vivo</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

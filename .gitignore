@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# gerado pelo esbuild a partir de src/app.js
+renderer/app.js

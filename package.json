@@ -1,0 +1,50 @@
+{
+  "name": "telinha",
+  "version": "2.1.0",
+  "description": "Compartilhamento de tela com som para até 5 amigos",
+  "author": "Telinha",
+  "main": "main.js",
+  "scripts": {
+    "build:js": "esbuild src/app.js --bundle --format=iife --target=chrome130 --outfile=renderer/app.js",
+    "start": "npm run build:js && electron .",
+    "dist": "npm run build:js && electron-builder --win nsis --publish never",
+    "release": "npm run build:js && electron-builder --win nsis --publish always"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8",
+    "esbuild": "0.28.2",
+    "trystero": "0.26.0"
+  },
+  "build": {
+    "appId": "com.telinha.app",
+    "productName": "Telinha",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Telinha-Setup-${version}.exe"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "DBRASA",
+      "repo": "telinha-releases",
+      "releaseType": "release"
+    }
+  },
+  "allowScripts": {
+    "electron@33.2.1": true,
+    "esbuild@0.28.2": true
+  },
+  "dependencies": {
+    "electron-updater": "6.3.9"
+  }
+}
