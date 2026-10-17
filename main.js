@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
@@ -17,20 +16,14 @@ let pending = { id: null, audio: true }; // fonte escolhida no seletor
 // (por isso o app roda como administrador: requestedExecutionLevel no package.json).
 const RADMIN_SERVICE = 'RvControlSvc';
 
-const radminExe = () => [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]
-  .filter(Boolean)
-  .map((dir) => path.join(dir, 'Radmin VPN', 'RvRvpnGui.exe'))
-  .find((p) => fs.existsSync(p));
+// Liga a VPN e abre o Radmin VPN junto com o Telinha (se já não estiver aberto).
+function openRadmin(win) {
+  const exe = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]
+    .filter(Boolean)
+    .map((dir) => path.join(dir, 'Radmin VPN', 'RvRvpnGui.exe'))
+    .find((p) => fs.existsSync(p));
 
-// Auxiliar nativo (native/TelinhaAudio.cs): som por programa e minimizar o Radmin.
-const helperExe = () => (app.isPackaged
-  ? path.join(process.resourcesPath, 'TelinhaAudio.exe')
-  : path.join(__dirname, 'native', 'TelinhaAudio.exe'));
-
-// Liga a VPN do Radmin e abre a janela dele minimizada na barra de tarefas. Sem abrir a janela,
-// depois que o serviço é religado a VPN nem sempre reconecta (alguns amigos sumiam na 2.1.8).
-function startRadmin(win) {
-  if (!radminExe()) {
+  if (!exe) {
     dialog.showMessageBox(win, {
       type: 'warning',
       title: 'Radmin VPN não encontrado',
@@ -47,34 +40,9 @@ function startRadmin(win) {
   execFile('sc', ['start', RADMIN_SERVICE], { windowsHide: true }, () => {
     execFile('tasklist', ['/FI', 'IMAGENAME eq RvRvpnGui.exe', '/NH'], (err, out) => {
       if (!err && out.includes('RvRvpnGui.exe')) return; // já está aberto
-      spawn(radminExe(), [], { detached: true, stdio: 'ignore' }).unref();
-      // O Radmin sempre abre a janela na frente; o auxiliar minimiza assim que ela aparece.
-      if (fs.existsSync(helperExe())) {
-        spawn(helperExe(), ['minimize', 'RvRvpnGui'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      }
+      spawn(exe, ['/show'], { detached: true, stdio: 'ignore' }).unref();
     });
   });
-}
-
-// Status pra barra lateral: instalado? serviço rodando? qual o meu IP na rede do Radmin?
-function radminStatus() {
-  return new Promise((resolve) => {
-    if (!radminExe()) return resolve({ installed: false });
-    const ip = Object.entries(os.networkInterfaces())
-      .filter(([name]) => /radmin/i.test(name))
-      .flatMap(([, addrs]) => addrs)
-      .find((a) => a.family === 'IPv4')?.address || null;
-    execFile('sc', ['query', RADMIN_SERVICE], { windowsHide: true }, (_err, out = '') => {
-      // "STATE : 4 RUNNING" (o nome do campo muda com o idioma do Windows, o "4 RUNNING" não)
-      resolve({ installed: true, running: /:\s*4\s+RUNNING/.test(out), ip });
-    });
-  });
-}
-
-function openRadminWindow() {
-  const exe = radminExe();
-  if (exe) spawn(exe, ['/show'], { detached: true, stdio: 'ignore' }).unref();
-  else shell.openExternal('https://www.radmin-vpn.com/br/');
 }
 
 // Procura versão nova no GitHub, baixa em segundo plano e pergunta se quer reiniciar.
@@ -107,7 +75,9 @@ function stopAppAudio() {
 
 function startAppAudio(args) {
   stopAppAudio();
-  const exe = helperExe();
+  const exe = app.isPackaged
+    ? path.join(process.resourcesPath, 'TelinhaAudio.exe')
+    : path.join(__dirname, 'native', 'TelinhaAudio.exe');
   if (!fs.existsSync(exe)) return Promise.resolve({ ok: false });
 
   return new Promise((resolve) => {
@@ -150,7 +120,7 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => {
-    startRadmin(win);
+    openRadmin(win);
     checkUpdates(win);
   });
 }
@@ -190,8 +160,6 @@ app.whenReady().then(() => {
 
   ipcMain.handle('audio-start', (_e, args) => startAppAudio(args));
   ipcMain.handle('audio-stop', stopAppAudio);
-  ipcMain.handle('radmin-status', radminStatus);
-  ipcMain.handle('radmin-open', openRadminWindow);
 
   createWindow();
 });

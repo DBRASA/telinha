@@ -9,6 +9,4 @@ contextBridge.exposeInMainWorld('telinha', {
   audioStart: (args) => ipcRenderer.invoke('audio-start', args),
   audioStop: () => ipcRenderer.invoke('audio-stop'),
   onAudioData: (fn) => { audioListener = fn; },
-  radminStatus: () => ipcRenderer.invoke('radmin-status'),
-  radminOpen: () => ipcRenderer.invoke('radmin-open'),
 });

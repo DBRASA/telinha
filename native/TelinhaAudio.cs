@@ -3,7 +3,6 @@
 //
 //   TelinhaAudio.exe exclude-discord   -> todo o som, menos o Discord
 //   TelinhaAudio.exe window <hwnd>     -> só o som do programa dessa janela
-//   TelinhaAudio.exe minimize <nome>   -> espera a janela do programa abrir e minimiza (Radmin)
 //
 // Escreve "READY" no stderr quando a captura começou.
 using System;
@@ -101,27 +100,6 @@ static class Program
     [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
-    [DllImport("user32.dll")]
-    static extern bool ShowWindow(IntPtr hwnd, int command);
-    const int SW_MINIMIZE = 6;
-
-    // Espera até 10 s a janela principal do programa aparecer e minimiza pra barra de tarefas.
-    static void MinimizeWhenShown(string processName)
-    {
-        for (int i = 0; i < 50; i++)
-        {
-            foreach (var p in Process.GetProcessesByName(processName))
-            {
-                if (p.MainWindowHandle != IntPtr.Zero)
-                {
-                    ShowWindow(p.MainWindowHandle, SW_MINIMIZE);
-                    return;
-                }
-            }
-            Thread.Sleep(200);
-        }
-    }
-
     [MTAThread]
     static int Main(string[] args)
     {
@@ -140,14 +118,9 @@ static class Program
                 if (pid == 0) throw new Exception("janela não encontrada");
                 mode = LOOPBACK_INCLUDE_TREE;
             }
-            else if (args.Length >= 2 && args[0] == "minimize")
-            {
-                MinimizeWhenShown(args[1]);
-                return 0;
-            }
             else
             {
-                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd> | minimize <nome>");
+                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd>");
                 return 2;
             }
             Capture(pid, mode);
