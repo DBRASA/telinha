@@ -7,7 +7,11 @@ const { autoUpdater } = require('electron-updater');
 let win = null;
 let pending = { id: null, audio: true }; // fonte escolhida no seletor
 
-// Abre o Radmin VPN junto com o Telinha (se já não estiver aberto).
+// Serviço do Radmin que mantém a VPN ligada. O Telinha liga ao abrir e desliga ao fechar
+// (por isso o app roda como administrador: requestedExecutionLevel no package.json).
+const RADMIN_SERVICE = 'RvControlSvc';
+
+// Liga a VPN e abre o Radmin VPN junto com o Telinha (se já não estiver aberto).
 function openRadmin(win) {
   const exe = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]
     .filter(Boolean)
@@ -27,9 +31,12 @@ function openRadmin(win) {
     return;
   }
 
-  execFile('tasklist', ['/FI', 'IMAGENAME eq RvRvpnGui.exe', '/NH'], (err, out) => {
-    if (!err && out.includes('RvRvpnGui.exe')) return; // já está aberto
-    spawn(exe, ['/show'], { detached: true, stdio: 'ignore' }).unref();
+  // "sc start" falha sem problema se o serviço já estiver rodando.
+  execFile('sc', ['start', RADMIN_SERVICE], { windowsHide: true }, () => {
+    execFile('tasklist', ['/FI', 'IMAGENAME eq RvRvpnGui.exe', '/NH'], (err, out) => {
+      if (!err && out.includes('RvRvpnGui.exe')) return; // já está aberto
+      spawn(exe, ['/show'], { detached: true, stdio: 'ignore' }).unref();
+    });
   });
 }
 
@@ -154,10 +161,13 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => app.quit());
 
-// Fecha o Radmin VPN (e a captura de som) junto com o Telinha.
+// Fecha o Radmin VPN por completo (janela + VPN) e a captura de som junto com o Telinha.
 app.on('will-quit', () => {
   stopAppAudio();
   try {
     execFileSync('taskkill', ['/F', '/IM', 'RvRvpnGui.exe'], { stdio: 'ignore', windowsHide: true });
   } catch {} // não estava aberto
+  try {
+    execFileSync('sc', ['stop', RADMIN_SERVICE], { stdio: 'ignore', windowsHide: true });
+  } catch {} // já parado (ou sem permissão de administrador)
 });
