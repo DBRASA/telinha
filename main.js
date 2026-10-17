@@ -22,8 +22,13 @@ const radminExe = () => [process.env['ProgramFiles(x86)'], process.env.ProgramFi
   .map((dir) => path.join(dir, 'Radmin VPN', 'RvRvpnGui.exe'))
   .find((p) => fs.existsSync(p));
 
-// Liga a VPN do Radmin em segundo plano. A janela do Radmin não é necessária pra VPN funcionar
-// (quem conecta é o serviço); ela só abre pelo botão "Abrir Radmin" do Telinha.
+// Auxiliar nativo (native/TelinhaAudio.cs): som por programa e minimizar o Radmin.
+const helperExe = () => (app.isPackaged
+  ? path.join(process.resourcesPath, 'TelinhaAudio.exe')
+  : path.join(__dirname, 'native', 'TelinhaAudio.exe'));
+
+// Liga a VPN do Radmin e abre a janela dele minimizada na barra de tarefas. Sem abrir a janela,
+// depois que o serviço é religado a VPN nem sempre reconecta (alguns amigos sumiam na 2.1.8).
 function startRadmin(win) {
   if (!radminExe()) {
     dialog.showMessageBox(win, {
@@ -39,7 +44,16 @@ function startRadmin(win) {
   }
 
   // "sc start" falha sem problema se o serviço já estiver rodando.
-  execFile('sc', ['start', RADMIN_SERVICE], { windowsHide: true }, () => {});
+  execFile('sc', ['start', RADMIN_SERVICE], { windowsHide: true }, () => {
+    execFile('tasklist', ['/FI', 'IMAGENAME eq RvRvpnGui.exe', '/NH'], (err, out) => {
+      if (!err && out.includes('RvRvpnGui.exe')) return; // já está aberto
+      spawn(radminExe(), [], { detached: true, stdio: 'ignore' }).unref();
+      // O Radmin sempre abre a janela na frente; o auxiliar minimiza assim que ela aparece.
+      if (fs.existsSync(helperExe())) {
+        spawn(helperExe(), ['minimize', 'RvRvpnGui'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      }
+    });
+  });
 }
 
 // Status pra barra lateral: instalado? serviço rodando? qual o meu IP na rede do Radmin?
@@ -93,9 +107,7 @@ function stopAppAudio() {
 
 function startAppAudio(args) {
   stopAppAudio();
-  const exe = app.isPackaged
-    ? path.join(process.resourcesPath, 'TelinhaAudio.exe')
-    : path.join(__dirname, 'native', 'TelinhaAudio.exe');
+  const exe = helperExe();
   if (!fs.existsSync(exe)) return Promise.resolve({ ok: false });
 
   return new Promise((resolve) => {
