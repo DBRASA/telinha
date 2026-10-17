@@ -163,6 +163,31 @@ aside {
 .tile-bar .vol { width: 100px; margin: 0; padding: 0; accent-color: var(--accent); }
 .tile-bar button { padding: 4px 10px; background: rgba(0,0,0,.5); }
 .tile:fullscreen { border-radius: 0; }
+.tile-bar .unwatch:hover { background: var(--red); }
+.tile.loading::after {
+  content: 'Carregando transmissão...';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+/* Cartão de live que ainda não estou assistindo */
+.live-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--side);
+}
+.live-card p { margin: 0; color: var(--text); font-size: 15px; }
+.live-card button { padding: 10px 28px; font-weight: 600; }
+.avatar.big { width: 72px; height: 72px; font-size: 30px; }
+
+#people li.clickable { cursor: pointer; }
+.live.watching { background: var(--accent); }
 
 /* Seletor */
 dialog {

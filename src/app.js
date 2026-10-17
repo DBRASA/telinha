@@ -25,6 +25,9 @@ const state = {
   room: null,
   hello: null, // ação: { name, joinedAt, sharing }
   share: null, // ação: { sharing }
+  watch: null, // ação: { watching } — pede (ou cancela) a transmissão de alguém
+  watching: new Set(), // lives que eu escolhi assistir
+  viewers: new Set(), // quem está assistindo a minha
   myName: '',
   joinedAt: 0,
   peers: new Map(), // peerId -> { name, joinedAt, sharing }
@@ -87,8 +90,26 @@ function enterRoom(name) {
     onMessage: ({ sharing }, { peerId }) => {
       const peer = state.peers.get(peerId);
       if (peer) peer.sharing = sharing;
-      if (!sharing) removeTile(peerId);
+      if (!sharing) {
+        state.watching.delete(peerId); // a live acabou
+        removeTile(peerId);
+      }
       renderPeople();
+    },
+  });
+
+  // Quem transmite só envia o vídeo pra quem pediu pra assistir.
+  state.watch = room.makeAction('watch', {
+    onMessage: ({ watching }, { peerId }) => {
+      if (!state.localStream) return;
+      if (watching && !state.viewers.has(peerId)) {
+        state.viewers.add(peerId);
+        room.addStream(state.localStream, { target: peerId });
+      } else if (!watching && state.viewers.has(peerId)) {
+        state.viewers.delete(peerId);
+        room.removeStream(state.localStream, { target: peerId });
+      }
+      updateMyTileLabel();
     },
   });
 
@@ -96,21 +117,21 @@ function enterRoom(name) {
     state.failed.delete(peerId);
     if (!state.peers.has(peerId)) state.peers.set(peerId, { sharing: false });
     sendHello(peerId);
-    if (state.localStream) room.addStream(state.localStream, { target: peerId });
     renderPeople();
   };
 
   room.onPeerLeave = (peerId) => {
     state.peers.delete(peerId);
+    state.watching.delete(peerId);
+    state.viewers.delete(peerId);
     removeTile(peerId);
+    updateMyTileLabel();
     renderPeople();
   };
 
   room.onPeerStream = (stream, peerId) => {
-    const peer = state.peers.get(peerId);
-    if (peer) peer.sharing = true;
+    if (!state.watching.has(peerId)) return; // não pedi essa live
     showTile(peerId, nameOf(peerId), stream, false);
-    renderPeople();
   };
 
   $('#lobby').hidden = true;
@@ -158,9 +179,10 @@ function leaveRoom() {
   stopShare();
   clearInterval(state.statusTimer);
   state.room?.leave();
-  state.room = state.hello = state.share = null;
+  state.room = state.hello = state.share = state.watch = null;
   state.peers.clear();
   state.failed.clear();
+  state.watching.clear();
   document.querySelectorAll('#stage .tile').forEach((t) => t.remove());
   $('#room').hidden = true;
   $('#lobby').hidden = false;
@@ -307,7 +329,7 @@ async function startShare(sourceId, qualityKey, audioMode) {
   for (const a of stream.getAudioTracks()) a.contentHint = 'music';
 
   state.localStream = stream;
-  state.room.addStream(stream);
+  state.viewers.clear(); // o vídeo só vai pra quem clicar em "Assistir"
   state.share.send({ sharing: true });
   state.bitrateTimer = setInterval(applyBitrate, 2000);
   showTile(selfId, `${state.myName} (você)`, stream, true);
@@ -318,7 +340,8 @@ async function startShare(sourceId, qualityKey, audioMode) {
 function stopShare() {
   if (!state.localStream) return;
   clearInterval(state.bitrateTimer);
-  state.room?.removeStream(state.localStream);
+  if (state.viewers.size) state.room?.removeStream(state.localStream, { target: [...state.viewers] });
+  state.viewers.clear();
   state.localStream.getTracks().forEach((t) => t.stop());
   state.localStream = null;
   state.appAudio?.stop();
@@ -349,6 +372,22 @@ function applyBitrate() {
   }
 }
 
+// ---------- Assistir ----------
+function watch(id) {
+  if (state.watching.has(id) || !state.peers.get(id)?.sharing) return;
+  state.watching.add(id);
+  state.watch.send({ watching: true }, { target: id });
+  showTile(id, nameOf(id), null, false); // "Carregando..." até o vídeo chegar
+  renderPeople();
+}
+
+function unwatch(id) {
+  if (!state.watching.delete(id)) return;
+  state.watch?.send({ watching: false }, { target: id });
+  removeTile(id);
+  renderPeople();
+}
+
 // ---------- Interface ----------
 function showTile(id, label, stream, isLocal) {
   let tile = document.getElementById('tile-' + id);
@@ -363,20 +402,26 @@ function showTile(id, label, stream, isLocal) {
         <span class="spacer"></span>
         ${isLocal ? '' : '<input class="vol" type="range" min="0" max="1" step="0.01" value="1" title="Volume">'}
         <button class="fs" title="Tela cheia">⛶</button>
+        ${isLocal ? '' : '<button class="unwatch" title="Parar de assistir">✕</button>'}
       </div>`;
     const video = tile.querySelector('video');
     const vol = tile.querySelector('.vol');
     if (vol) vol.oninput = () => { video.volume = Number(vol.value); };
     const toggleFs = () => (document.fullscreenElement ? document.exitFullscreen() : tile.requestFullscreen());
     tile.querySelector('.fs').onclick = toggleFs;
+    const stop = tile.querySelector('.unwatch');
+    if (stop) stop.onclick = () => unwatch(id);
     video.ondblclick = toggleFs;
     video.onclick = () => tile.classList.toggle('focused');
-    $('#stage').append(tile);
+    const card = document.getElementById('card-' + id);
+    if (card) card.replaceWith(tile); // o vídeo entra no lugar do cartão
+    else $('#stage').append(tile);
   }
   tile.querySelector('.tile-name').textContent = label;
   const video = tile.querySelector('video');
   video.muted = isLocal; // não tocar o próprio som de volta
-  if (video.srcObject !== stream) video.srcObject = stream;
+  tile.classList.toggle('loading', !stream);
+  if (stream && video.srcObject !== stream) video.srcObject = stream;
   updateEmpty();
 }
 
@@ -385,9 +430,41 @@ function updateTileName(id) {
   if (el) el.textContent = nameOf(id);
 }
 
+function updateMyTileLabel() {
+  const el = document.querySelector(`#tile-${CSS.escape(selfId)} .tile-name`);
+  const n = state.viewers.size;
+  if (el) el.textContent = `${state.myName} (você)` + (n ? ` · ${n} assistindo` : '');
+}
+
 function removeTile(id) {
   document.getElementById('tile-' + id)?.remove();
   updateEmpty();
+}
+
+// Cartão "Fulano está ao vivo · Assistir" pra cada live que eu não estou assistindo.
+function renderLiveCards() {
+  for (const [id, peer] of state.peers) {
+    const card = document.getElementById('card-' + id);
+    const wanted = peer.sharing && !state.watching.has(id);
+    if (!wanted) { card?.remove(); continue; }
+    if (card) { card.querySelector('.pname').textContent = nameOf(id); continue; }
+    const el = document.createElement('div');
+    el.className = 'tile live-card';
+    el.id = 'card-' + id;
+    el.innerHTML = `
+      <span class="avatar big"></span>
+      <p><b class="pname"></b> está <span class="live">AO VIVO</span></p>
+      <button class="primary">Assistir</button>`;
+    const avatar = el.querySelector('.avatar');
+    avatar.textContent = nameOf(id)[0].toUpperCase();
+    avatar.style.background = colorFor(nameOf(id));
+    el.querySelector('.pname').textContent = nameOf(id);
+    el.querySelector('button').onclick = () => watch(id);
+    $('#stage').append(el);
+  }
+  document.querySelectorAll('#stage .live-card').forEach((c) => {
+    if (!state.peers.has(c.id.slice(5))) c.remove();
+  });
 }
 
 function updateEmpty() {
@@ -402,18 +479,29 @@ function renderPeople() {
   const list = $('#people');
   list.innerHTML = '';
   const everyone = [
-    { name: `${state.myName} (você)`, sharing: !!state.localStream },
-    ...[...state.peers.keys()].map((id) => ({ name: nameOf(id), sharing: state.peers.get(id).sharing })),
+    { id: selfId, name: `${state.myName} (você)`, sharing: !!state.localStream },
+    ...[...state.peers.keys()].map((id) => ({ id, name: nameOf(id), sharing: state.peers.get(id).sharing })),
   ];
   for (const p of everyone) {
     const li = document.createElement('li');
-    li.innerHTML = `<span class="avatar"></span><span class="pname"></span>${p.sharing ? '<span class="live">AO VIVO</span>' : ''}`;
+    const isMe = p.id === selfId;
+    const watching = state.watching.has(p.id);
+    const badge = !p.sharing ? '' : watching
+      ? '<span class="live watching">ASSISTINDO</span>'
+      : '<span class="live">AO VIVO</span>';
+    li.innerHTML = `<span class="avatar"></span><span class="pname"></span>${badge}`;
     const avatar = li.querySelector('.avatar');
     avatar.textContent = p.name[0].toUpperCase();
     avatar.style.background = colorFor(p.name);
     li.querySelector('.pname').textContent = p.name;
+    if (p.sharing && !isMe) {
+      li.classList.add('clickable');
+      li.title = watching ? 'Clique pra parar de assistir' : 'Clique pra assistir';
+      li.onclick = () => (watching ? unwatch(p.id) : watch(p.id));
+    }
     list.append(li);
   }
   $('#count').textContent = `${everyone.length}/${MAX_PEOPLE}`;
+  renderLiveCards();
   updateEmpty();
 }
