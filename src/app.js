@@ -47,6 +47,39 @@ function colorFor(name) {
 }
 const nameOf = (id) => state.peers.get(id)?.name || 'Conectando...';
 
+// ---------- Sons ----------
+// No estilo dos avisos do Discord, mas gerados aqui (os do Discord têm direitos autorais).
+// Cada som é uma sequência de [frequência em Hz, início em segundos].
+const SOUNDS = {
+  join: [[1046.5, 0], [1568, 0.09]],
+  leave: [[1568, 0], [1046.5, 0.09]],
+  liveStart: [[659.3, 0], [880, 0.08], [1318.5, 0.16]],
+  liveStop: [[1318.5, 0], [880, 0.08], [659.3, 0.16]],
+  viewer: [[1760, 0]],
+};
+let sfx = null;
+
+function playSound(name) {
+  try {
+    sfx ??= new AudioContext();
+    const t0 = sfx.currentTime + 0.01;
+    for (const [freq, at] of SOUNDS[name]) {
+      const osc = sfx.createOscillator();
+      const gain = sfx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t0 + at);
+      gain.gain.linearRampToValueAtTime(0.18, t0 + at + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + at + 0.25);
+      osc.connect(gain).connect(sfx.destination);
+      osc.start(t0 + at);
+      osc.stop(t0 + at + 0.3);
+    }
+  } catch (e) {
+    console.warn('som:', e);
+  }
+}
+
 const svg = (body) => `<svg class="ico" viewBox="0 0 24 24">${body}</svg>`;
 const ICON = {
   monitor: svg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'),
@@ -76,6 +109,7 @@ $('#go').onclick = () => {
 function enterRoom(name) {
   state.myName = name;
   state.joinedAt = Date.now();
+  playSound('join');
 
   const config = { appId: APP_ID, password: PASSWORD, relayConfig: { redundancy: 8 } };
   if (TURN_SERVERS.length) config.turnConfig = TURN_SERVERS;
@@ -87,7 +121,10 @@ function enterRoom(name) {
 
   state.hello = room.makeAction('hello', {
     onMessage: (data, { peerId }) => {
+      const isNew = !state.peers.get(peerId)?.name;
       state.peers.set(peerId, { ...state.peers.get(peerId), ...data });
+      // Só toca pra quem entrou depois de mim (quem já estava na sala chega todo de uma vez).
+      if (isNew && data.joinedAt > state.joinedAt) playSound('join');
       checkFull();
       updateTileName(peerId);
       renderPeople();
@@ -97,6 +134,7 @@ function enterRoom(name) {
   state.share = room.makeAction('share', {
     onMessage: ({ sharing }, { peerId }) => {
       const peer = state.peers.get(peerId);
+      if (peer && peer.sharing !== sharing) playSound(sharing ? 'liveStart' : 'liveStop');
       if (peer) peer.sharing = sharing;
       if (!sharing) {
         state.watching.delete(peerId); // a live acabou
@@ -112,6 +150,7 @@ function enterRoom(name) {
       if (!state.localStream) return;
       if (watching && !state.viewers.has(peerId)) {
         state.viewers.add(peerId);
+        playSound('viewer');
         room.addStream(state.localStream, { target: peerId });
       } else if (!watching && state.viewers.has(peerId)) {
         state.viewers.delete(peerId);
@@ -128,6 +167,7 @@ function enterRoom(name) {
   };
 
   room.onPeerLeave = (peerId) => {
+    if (state.peers.get(peerId)?.name) playSound('leave');
     state.peers.delete(peerId);
     state.watching.delete(peerId);
     state.viewers.delete(peerId);
@@ -348,6 +388,7 @@ async function startShare(sourceId, qualityKey, audioMode) {
   state.localStream = stream;
   state.viewers.clear(); // o vídeo só vai pra quem clicar em "Assistir"
   state.share.send({ sharing: true });
+  playSound('liveStart');
   state.bitrateTimer = setInterval(applyBitrate, 2000);
   showTile(selfId, `${state.myName} (você)`, stream, true);
   updateShareButton();
@@ -408,6 +449,7 @@ function stopShare() {
   state.appAudio?.stop();
   state.appAudio = null;
   state.share?.send({ sharing: false });
+  if (state.room) playSound('liveStop');
   removeTile(selfId);
   updateShareButton();
   renderPeople();
