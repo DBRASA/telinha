@@ -51,6 +51,8 @@ const svg = (body) => `<svg class="ico" viewBox="0 0 24 24">${body}</svg>`;
 const ICON = {
   monitor: svg('<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'),
   stop: svg('<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>'),
+  swap: svg('<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>'),
+  live: svg('<circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19 5a10 10 0 0 1 0 14M5 19A10 10 0 0 1 5 5"/>'),
   volume: svg('<path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>'),
   fullscreen: svg('<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>'),
   close: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
@@ -188,9 +190,13 @@ $('#share').onclick = () => (state.localStream ? stopShare() : openPicker());
 
 function updateShareButton() {
   const btn = $('#share');
-  btn.innerHTML = state.localStream ? `${ICON.stop} Parar de compartilhar` : `${ICON.monitor} Compartilhar tela`;
+  btn.innerHTML = state.localStream ? `${ICON.stop} Parar` : `${ICON.monitor} Compartilhar tela`;
   btn.className = state.localStream ? 'danger' : 'primary';
+  $('#change').hidden = !state.localStream;
 }
+
+$('#change').innerHTML = `${ICON.swap} Alterar`;
+$('#change').onclick = openPicker;
 
 let pickerKind = 'screen';
 let pickerSources = [];
@@ -198,6 +204,10 @@ let pickedId = null;
 
 async function openPicker() {
   pickedId = null;
+  const changing = !!state.localStream; // já ao vivo: troca a transmissão sem parar
+  $('#picker h3').textContent = changing ? 'Alterar transmissão' : 'Escolha o que compartilhar';
+  $('#picker-go').innerHTML = changing ? `${ICON.swap} Aplicar` : `${ICON.live} Entrar ao vivo`;
+  renderAudioModes();
   $('#picker-go').disabled = true;
   $('#quality').value = load('quality') || '1080p30';
   $('#sources').innerHTML = '<p class="hint">Carregando...</p>';
@@ -225,6 +235,8 @@ const AUDIO_MODES = {
 function renderAudioModes() {
   const modes = pickerKind === 'window' ? ['window', 'no-discord', 'all', 'none'] : ['no-discord', 'all', 'none'];
   $('#audio-mode').innerHTML = modes.map((m) => `<option value="${m}">${AUDIO_MODES[m]}</option>`).join('');
+  const last = load('audioMode'); // lembra o último som escolhido
+  if (modes.includes(last) && !(pickerKind === 'window' && last === 'no-discord')) $('#audio-mode').value = last;
 }
 renderAudioModes();
 
@@ -257,9 +269,12 @@ function renderSources() {
 $('#picker-cancel').onclick = () => $('#picker').close();
 $('#picker-go').onclick = () => {
   const quality = $('#quality').value;
+  const audioMode = $('#audio-mode').value;
   save('quality', quality);
+  save('audioMode', audioMode);
   $('#picker').close();
-  startShare(pickedId, quality, $('#audio-mode').value);
+  if (state.localStream) changeShare(pickedId, quality, audioMode);
+  else startShare(pickedId, quality, audioMode);
 };
 
 // Som separado por programa (via TelinhaAudio.exe), transformado numa faixa de áudio.
@@ -276,6 +291,8 @@ async function startAppAudio(args) {
     const [track] = dest.stream.getAudioTracks();
     return {
       track,
+      // close: só desliga este player (usado quando outra captura de som já assumiu o auxiliar)
+      close: () => ctx.close(),
       stop: () => {
         api.onAudioData(null);
         api.audioStop();
@@ -289,8 +306,9 @@ async function startAppAudio(args) {
   }
 }
 
-async function startShare(sourceId, qualityKey, audioMode) {
-  const q = (state.quality = QUALITY[qualityKey]);
+// Captura a tela/janela escolhida com o som pedido. Devolve { stream, appAudio, quality } ou null.
+async function captureSource(sourceId, qualityKey, audioMode) {
+  const q = QUALITY[qualityKey];
 
   let appAudio = null;
   if (audioMode === 'no-discord' || audioMode === 'window') {
@@ -310,16 +328,23 @@ async function startShare(sourceId, qualityKey, audioMode) {
   } catch (e) {
     appAudio?.stop();
     alert('Não foi possível capturar a tela: ' + e.message);
-    return;
+    return null;
   }
   if (appAudio) stream.addTrack(appAudio.track);
-  state.appAudio = appAudio;
 
   const [video] = stream.getVideoTracks();
   video.contentHint = q.fps >= 60 ? 'motion' : 'detail';
   video.onended = stopShare; // janela fechada, etc.
   for (const a of stream.getAudioTracks()) a.contentHint = 'music';
+  return { stream, appAudio, quality: q };
+}
 
+async function startShare(sourceId, qualityKey, audioMode) {
+  const captured = await captureSource(sourceId, qualityKey, audioMode);
+  if (!captured) return;
+  const { stream } = captured;
+  state.quality = captured.quality;
+  state.appAudio = captured.appAudio;
   state.localStream = stream;
   state.viewers.clear(); // o vídeo só vai pra quem clicar em "Assistir"
   state.share.send({ sharing: true });
@@ -327,6 +352,50 @@ async function startShare(sourceId, qualityKey, audioMode) {
   showTile(selfId, `${state.myName} (você)`, stream, true);
   updateShareButton();
   renderPeople();
+}
+
+// Troca tela/janela, qualidade ou som no meio da live, sem derrubar quem está assistindo:
+// as faixas novas entram no lugar das antigas no mesmo MediaStream.
+async function changeShare(sourceId, qualityKey, audioMode) {
+  const captured = await captureSource(sourceId, qualityKey, audioMode);
+  if (!captured) return; // a live continua como estava
+  const live = state.localStream;
+  if (!live) { // a live acabou enquanto escolhia
+    captured.stream.getTracks().forEach((t) => t.stop());
+    captured.appAudio?.stop();
+    return;
+  }
+  const room = state.room;
+  const viewers = [...state.viewers];
+  const opts = { target: viewers };
+
+  for (const kind of ['video', 'audio']) {
+    const oldTrack = live.getTracks().find((t) => t.kind === kind);
+    const newTrack = captured.stream.getTracks().find((t) => t.kind === kind);
+    if (oldTrack) live.removeTrack(oldTrack);
+    if (newTrack) live.addTrack(newTrack);
+    if (viewers.length) {
+      if (oldTrack && newTrack) room.replaceTrack(oldTrack, newTrack, opts);
+      else if (oldTrack) room.removeTrack(oldTrack, opts);
+      else if (newTrack) room.addTrack(newTrack, live, opts);
+    }
+    if (oldTrack) {
+      oldTrack.onended = null;
+      oldTrack.stop();
+    }
+  }
+
+  // Som separado por programa: se a captura nova também usa o auxiliar, ele já foi reiniciado pra ela.
+  if (state.appAudio) {
+    if (captured.appAudio) state.appAudio.close();
+    else state.appAudio.stop();
+  }
+  state.appAudio = captured.appAudio;
+  state.quality = captured.quality;
+
+  const myVideo = document.querySelector(`#tile-${CSS.escape(selfId)} video`);
+  if (myVideo) { myVideo.srcObject = null; myVideo.srcObject = live; }
+  applyBitrate();
 }
 
 function stopShare() {

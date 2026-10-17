@@ -4,6 +4,11 @@ const fs = require('fs');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
+// A captura de janela pelo Windows Graphics Capture falha ("Could not start video source");
+// desligando só ela, o Chromium usa o capturador clássico de janelas, que funciona.
+// A captura da tela inteira continua igual.
+app.commandLine.appendSwitch('disable-features', 'AllowWgcWindowCapturer');
+
 let win = null;
 let pending = { id: null, audio: true }; // fonte escolhida no seletor
 

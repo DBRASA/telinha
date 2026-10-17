@@ -219,7 +219,8 @@ aside {
 .me-text b { color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .me-text span { color: var(--muted); font-size: 12px; }
 .me-text span.on { color: var(--live); font-weight: 600; }
-#share { width: 100%; padding: 10px; font-weight: 600; }
+.me-actions { display: flex; gap: 8px; }
+.me-actions button { flex: 1; padding: 10px; font-weight: 600; }
 
 main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--dark); }
 .topbar {
