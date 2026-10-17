@@ -3,6 +3,7 @@
 //
 //   TelinhaAudio.exe exclude-discord   -> todo o som, menos o Discord
 //   TelinhaAudio.exe window <hwnd>     -> só o som do programa dessa janela
+//   TelinhaAudio.exe hide <nome>       -> esconde a janela do programa por 10 s (Radmin fica só no ícone do relógio)
 //
 // Escreve "READY" no stderr quando a captura começou.
 using System;
@@ -100,6 +101,24 @@ static class Program
     [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
+    [DllImport("user32.dll")]
+    static extern bool ShowWindow(IntPtr hwnd, int command);
+    const int SW_HIDE = 0;
+
+    // Durante 10 s, esconde a janela principal do programa toda vez que ela aparecer
+    // (o Radmin mostra a janela de novo depois de carregar). O ícone perto do relógio continua.
+    static void HideWhileStarting(string processName)
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            foreach (var p in Process.GetProcessesByName(processName))
+            {
+                if (p.MainWindowHandle != IntPtr.Zero) ShowWindow(p.MainWindowHandle, SW_HIDE);
+            }
+            Thread.Sleep(100);
+        }
+    }
+
     [MTAThread]
     static int Main(string[] args)
     {
@@ -118,9 +137,14 @@ static class Program
                 if (pid == 0) throw new Exception("janela não encontrada");
                 mode = LOOPBACK_INCLUDE_TREE;
             }
+            else if (args.Length >= 2 && args[0] == "hide")
+            {
+                HideWhileStarting(args[1]);
+                return 0;
+            }
             else
             {
-                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd>");
+                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd> | hide <nome>");
                 return 2;
             }
             Capture(pid, mode);

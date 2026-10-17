@@ -16,7 +16,12 @@ let pending = { id: null, audio: true }; // fonte escolhida no seletor
 // (por isso o app roda como administrador: requestedExecutionLevel no package.json).
 const RADMIN_SERVICE = 'RvControlSvc';
 
-// Liga a VPN e abre o Radmin VPN junto com o Telinha (se já não estiver aberto).
+// Auxiliar nativo (native/TelinhaAudio.cs): som por programa e esconder a janela do Radmin.
+const helperExe = () => (app.isPackaged
+  ? path.join(process.resourcesPath, 'TelinhaAudio.exe')
+  : path.join(__dirname, 'native', 'TelinhaAudio.exe'));
+
+// Liga a VPN e abre o Radmin VPN junto com o Telinha (se já não estiver aberto), só no ícone do relógio.
 function openRadmin(win) {
   const exe = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles]
     .filter(Boolean)
@@ -40,7 +45,11 @@ function openRadmin(win) {
   execFile('sc', ['start', RADMIN_SERVICE], { windowsHide: true }, () => {
     execFile('tasklist', ['/FI', 'IMAGENAME eq RvRvpnGui.exe', '/NH'], (err, out) => {
       if (!err && out.includes('RvRvpnGui.exe')) return; // já está aberto
-      spawn(exe, ['/show'], { detached: true, stdio: 'ignore' }).unref();
+      spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+      // O Radmin sempre abre a janela na frente; o auxiliar esconde ela (fica o ícone perto do relógio).
+      if (fs.existsSync(helperExe())) {
+        spawn(helperExe(), ['hide', 'RvRvpnGui'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      }
     });
   });
 }
@@ -75,9 +84,7 @@ function stopAppAudio() {
 
 function startAppAudio(args) {
   stopAppAudio();
-  const exe = app.isPackaged
-    ? path.join(process.resourcesPath, 'TelinhaAudio.exe')
-    : path.join(__dirname, 'native', 'TelinhaAudio.exe');
+  const exe = helperExe();
   if (!fs.existsSync(exe)) return Promise.resolve({ ok: false });
 
   return new Promise((resolve) => {
