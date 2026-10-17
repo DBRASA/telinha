@@ -171,6 +171,25 @@ function updateStatus() {
   $('#status').hidden = online || Date.now() - state.joinedAt < 5000;
 }
 
+// ---------- Radmin VPN (roda escondido; o Telinha liga ao abrir e desliga ao fechar) ----------
+const openedAt = Date.now();
+
+async function updateVpn() {
+  const s = await api.radminStatus();
+  let look = '', detail, button = 'Abrir';
+  if (!s.installed) { look = 'bad'; detail = 'Não instalado'; button = 'Baixar'; }
+  else if (s.running) { look = 'ok'; detail = s.ip ? `Conectado · ${s.ip}` : 'Conectado'; }
+  else if (Date.now() - openedAt < 15000) detail = 'Ligando...';
+  else { look = 'bad'; detail = 'Desligado. Clique em Abrir.'; }
+  $('#vpn').className = 'vpn ' + look;
+  $('#vpn-detail').textContent = detail;
+  $('#vpn-open').textContent = button;
+}
+
+$('#vpn-open').onclick = () => api.radminOpen();
+updateVpn();
+setInterval(updateVpn, 5000);
+
 function leaveRoom() {
   stopShare();
   clearInterval(state.statusTimer);
