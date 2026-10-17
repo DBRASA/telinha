@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld('telinha', {
   audioStart: (args) => ipcRenderer.invoke('audio-start', args),
   audioStop: () => ipcRenderer.invoke('audio-stop'),
   onAudioData: (fn) => { audioListener = fn; },
+  discordLogin: () => ipcRenderer.invoke('discord-login'),
 });

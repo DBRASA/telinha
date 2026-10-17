@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const crypto = require('crypto');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
@@ -111,6 +113,101 @@ function startAppAudio(args) {
   });
 }
 
+// Login com Discord (OAuth2 "implicit grant": só precisa do Client ID, nenhum segredo vai no app).
+// Crie o aplicativo em https://discord.com/developers/applications e, em OAuth2 > Redirects,
+// adicione exatamente o DISCORD_REDIRECT abaixo.
+const DISCORD_CLIENT_ID = '1561147847427104799';
+const DISCORD_PORT = 53134;
+const DISCORD_REDIRECT = `http://127.0.0.1:${DISCORD_PORT}/callback`;
+
+// O Discord devolve o token depois do "#" da URL, que não chega no servidor;
+// esta página lê ele no navegador e repassa pro Telinha.
+const CALLBACK_PAGE = `<!doctype html><meta charset="utf-8"><title>Telinha</title>
+<body style="background:#313338;color:#dbdee1;font:16px 'Segoe UI',sans-serif;display:grid;place-items:center;height:90vh">
+<p id="m">Conectando...</p>
+<script>
+  const p = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+  fetch('/token?' + p).then((r) => r.text()).then((t) => { m.textContent = t; });
+</script>`;
+
+let discordLogin = null; // login em andamento: { server, timer, resolve }
+
+function endDiscordLogin(result) {
+  if (!discordLogin) return;
+  const { server, timer, resolve } = discordLogin;
+  discordLogin = null;
+  clearTimeout(timer);
+  server.close();
+  resolve(result);
+}
+
+// Abre a autorização do Discord no navegador e espera ele voltar pro 127.0.0.1 com o token.
+// Só o perfil (id, nome, foto) volta pro renderer; o token é descartado.
+function loginDiscord() {
+  if (!DISCORD_CLIENT_ID) return Promise.resolve({ ok: false, error: 'Login com Discord ainda não configurado.' });
+  endDiscordLogin({ ok: false, error: 'Login cancelado.' }); // clicou de novo
+
+  const state = crypto.randomBytes(16).toString('hex');
+  const url = 'https://discord.com/oauth2/authorize?' + new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    response_type: 'token',
+    redirect_uri: DISCORD_REDIRECT,
+    scope: 'identify',
+    state,
+  });
+
+  return new Promise((resolve) => {
+    const reply = (res, text) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(text);
+    };
+    const server = http.createServer(async (req, res) => {
+      const { pathname, searchParams: p } = new URL(req.url, DISCORD_REDIRECT);
+      if (pathname === '/callback') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(CALLBACK_PAGE);
+      }
+      if (pathname !== '/token' || p.get('state') !== state) {
+        res.writeHead(404);
+        return res.end();
+      }
+      const token = p.get('access_token');
+      if (!token) {
+        reply(res, 'Login cancelado. Pode fechar esta aba.');
+        return endDiscordLogin({ ok: false, error: 'Login cancelado.' });
+      }
+      try {
+        const r = await fetch('https://discord.com/api/v10/users/@me', { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) throw new Error(`Discord respondeu ${r.status}`);
+        const u = await r.json();
+        reply(res, 'Pronto! Pode fechar esta aba e voltar pro Telinha.');
+        endDiscordLogin({
+          ok: true,
+          user: {
+            id: u.id,
+            username: u.username,
+            globalName: u.global_name,
+            avatar: u.avatar,
+            banner: u.banner, // mural do perfil
+            accentColor: u.accent_color, // cor do mural quando não tem imagem
+            decoration: u.avatar_decoration_data?.asset, // enfeite em volta da foto
+            nameplate: u.collectibles?.nameplate?.asset, // placa de nome (fundo atrás do nome na lista)
+          },
+        });
+        if (win) { win.show(); win.focus(); }
+      } catch (e) {
+        console.error('Login Discord:', e);
+        reply(res, 'Não deu pra pegar seu perfil do Discord. Tente de novo.');
+        endDiscordLogin({ ok: false, error: 'Não deu pra pegar seu perfil do Discord.' });
+      }
+    });
+    server.on('error', () => endDiscordLogin({ ok: false, error: `A porta ${DISCORD_PORT} está ocupada por outro programa.` }));
+    const timer = setTimeout(() => endDiscordLogin({ ok: false, error: 'Tempo esgotado. Tente de novo.' }), 5 * 60_000);
+    discordLogin = { server, timer, resolve };
+    server.listen(DISCORD_PORT, '127.0.0.1', () => shell.openExternal(url));
+  });
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -167,6 +264,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('audio-start', (_e, args) => startAppAudio(args));
   ipcMain.handle('audio-stop', stopAppAudio);
+  ipcMain.handle('discord-login', loginDiscord);
 
   createWindow();
 });

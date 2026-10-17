@@ -21,6 +21,43 @@ const QUALITY = {
 };
 const AUDIO_BITRATE = 128_000;
 
+// O WebRTC começa toda conexão mandando ~300 kbps e sobe aos poucos enquanto mede a internet,
+// por isso a live começava borrada. Estes valores (em kbps) vão na negociação de cada conexão
+// e fazem o vídeo já sair em boa qualidade; se a internet não aguentar, ele ainda desce sozinho.
+const START_KBPS = 3000;
+const MIN_KBPS = 800;
+
+function boostVideoSdp(sdp) {
+  const lines = sdp.split(/\r?\n/);
+  let video = false;
+  const pts = new Set(); // codecs de vídeo desta parte do SDP
+  const hasFmtp = new Set();
+  for (const l of lines) {
+    if (l.startsWith('m=')) video = l.startsWith('m=video');
+    const rtp = video && l.match(/^a=rtpmap:(\d+) (VP8|VP9|H264|AV1)\//i);
+    if (rtp) pts.add(rtp[1]);
+    const fmtp = l.match(/^a=fmtp:(\d+) /);
+    if (fmtp) hasFmtp.add(fmtp[1]);
+  }
+  const params = `x-google-start-bitrate=${START_KBPS};x-google-min-bitrate=${MIN_KBPS}`;
+  return lines.flatMap((l) => {
+    const fmtp = l.match(/^a=fmtp:(\d+) /);
+    if (fmtp && pts.has(fmtp[1]) && !l.includes('x-google-start-bitrate')) return [`${l};${params}`];
+    const rtp = l.match(/^a=rtpmap:(\d+) /);
+    if (rtp && pts.has(rtp[1]) && !hasFmtp.has(rtp[1])) return [l, `a=fmtp:${rtp[1]} ${params}`];
+    return [l];
+  }).join('\r\n');
+}
+
+// Quem envia lê esses valores do SDP que recebe do outro lado; como todo mundo usa o Telinha,
+// ajustar o que chega em cada conexão vale pros dois sentidos.
+class FastStartPeerConnection extends RTCPeerConnection {
+  setRemoteDescription(desc) {
+    if (desc?.sdp) desc = { type: desc.type, sdp: boostVideoSdp(desc.sdp) };
+    return super.setRemoteDescription(desc);
+  }
+}
+
 const state = {
   room: null,
   hello: null, // ação: { name, joinedAt, sharing }
@@ -29,6 +66,7 @@ const state = {
   watching: new Set(), // lives que eu escolhi assistir
   viewers: new Set(), // quem está assistindo a minha
   myName: '',
+  discord: null, // perfil do Discord de quem logou: { id, username, globalName, avatar, banner, accentColor, decoration }
   joinedAt: 0,
   peers: new Map(), // peerId -> { name, joinedAt, sharing }
   localStream: null,
@@ -46,6 +84,91 @@ function colorFor(name) {
   return `hsl(${h} 55% 45%)`;
 }
 const nameOf = (id) => state.peers.get(id)?.name || 'Conectando...';
+
+// Foto do Discord montada aqui a partir do id + hash (não aceita URL pronta vinda de quem está na sala).
+function avatarUrl(d) {
+  if (!d || !/^\d{5,20}$/.test(d.id)) return null;
+  if (/^(a_)?[0-9a-f]{32}$/.test(d.avatar || '')) { // foto animada ("a_...") vai como GIF
+    return `https://cdn.discordapp.com/avatars/${d.id}/${d.avatar}.${d.avatar.startsWith('a_') ? 'gif' : 'png'}?size=128`;
+  }
+  return `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(d.id) >> 22n) % 6n)}.png`; // sem foto: avatar padrão
+}
+
+const DISCORD_HASH = /^(a_)?[0-9a-f]{32}$/;
+
+// Mural do perfil (animado se for "a_...").
+function bannerUrl(d) {
+  if (!d || !/^\d{5,20}$/.test(d.id) || !DISCORD_HASH.test(d.banner || '')) return null;
+  return `https://cdn.discordapp.com/banners/${d.id}/${d.banner}.${d.banner.startsWith('a_') ? 'gif' : 'png'}?size=600`;
+}
+
+// Enfeite em volta da foto (decoração de avatar).
+function decorationUrl(d) {
+  if (!DISCORD_HASH.test(d?.decoration || '')) return null;
+  return `https://cdn.discordapp.com/avatar-decoration-presets/${d.decoration}.png?size=160&passthrough=true`;
+}
+
+// Placa de nome (ex.: "nameplates/nameplates/twilight/"). O endereço não está na documentação do
+// Discord: é o mesmo que o app dele usa, então pode mudar um dia (aí a placa só some).
+function nameplateUrl(d, file) {
+  if (!/^[a-z0-9_]+(\/[a-z0-9_]+)*\/$/.test(d?.nameplate || '')) return null;
+  return `https://cdn.discordapp.com/assets/collectibles/${d.nameplate}${file}`;
+}
+
+const accentOf = (d) => (Number.isInteger(d?.accentColor) && d.accentColor >= 0 && d.accentColor <= 0xffffff
+  ? '#' + d.accentColor.toString(16).padStart(6, '0')
+  : null);
+
+// Cartão de perfil no estilo do Discord: mural, foto com enfeite, nome e @usuário.
+function renderProfileCard(box, name, d) {
+  box.innerHTML = `
+    <div class="pc-banner"></div>
+    <div class="pc-avatar-wrap"><span class="avatar pc-avatar"></span></div>
+    <div class="pc-body"><b class="pc-name"></b><span class="pc-user"></span></div>`;
+  const banner = box.querySelector('.pc-banner');
+  const color = accentOf(d) || colorFor(name);
+  box.style.setProperty('--pc', color);
+  const img = bannerUrl(d);
+  if (img) banner.style.backgroundImage = `url("${img}")`;
+  setAvatar(box.querySelector('.pc-avatar'), name, d);
+  box.querySelector('.pc-name').textContent = name;
+  box.querySelector('.pc-user').textContent = d?.username ? '@' + d.username : 'Entrou com nick';
+}
+
+// Clicar na foto de alguém na sala abre o cartão de perfil ao lado da barra lateral.
+function openProfile(anchor, name, d) {
+  const pop = $('#profile-pop');
+  renderProfileCard(pop, name, d);
+  pop.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = $('aside').getBoundingClientRect().right + 8 + 'px';
+  pop.style.top = Math.max(8, Math.min(r.top - 20, innerHeight - pop.offsetHeight - 8)) + 'px';
+}
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('#profile-pop, .avatar')) $('#profile-pop').hidden = true;
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#profile-pop').hidden = true; });
+
+// Círculo do avatar: foto do Discord (com o enfeite animado por cima) se tiver, senão a inicial colorida.
+function setAvatar(el, name, discord) {
+  const url = avatarUrl(discord);
+  el.textContent = url ? '' : (name[0]?.toUpperCase() || '?');
+  el.style.background = url ? 'transparent' : colorFor(name);
+  if (url) {
+    const img = document.createElement('img');
+    img.src = url;
+    img.onerror = () => { img.remove(); el.textContent = name[0]?.toUpperCase() || '?'; el.style.background = colorFor(name); };
+    el.append(img);
+  }
+  const deco = decorationUrl(discord);
+  if (deco) {
+    const img = document.createElement('img');
+    img.className = 'deco';
+    img.src = deco;
+    img.onerror = () => img.remove();
+    el.append(img);
+  }
+}
 
 // ---------- Sons ----------
 // No estilo dos avisos do Discord, mas gerados aqui (os do Discord têm direitos autorais).
@@ -90,6 +213,7 @@ const ICON = {
   fullscreen: svg('<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>'),
   close: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
   play: svg('<path d="M7 4.5v15l12-7.5z" fill="currentColor"/>'),
+  logout: svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
   users: svg('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'),
 };
 
@@ -99,11 +223,54 @@ $('#name').focus();
 $('#name').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#go').click(); });
 
 $('#go').onclick = () => {
-  const name = $('#name').value.trim();
+  const name = state.discord ? (state.discord.globalName || state.discord.username) : $('#name').value.trim();
   if (!name) { $('#lobby-error').textContent = 'Digite seu nick.'; return; }
-  save('name', name);
+  if (!state.discord) save('name', name);
   $('#lobby-error').textContent = '';
   enterRoom(name);
+};
+
+// ---------- Login com Discord ----------
+try { state.discord = JSON.parse(load('discord') || 'null'); } catch {}
+
+function renderLobbyProfile() {
+  const d = state.discord;
+  $('#discord-profile').hidden = !d;
+  $('#nick-login').hidden = !!d;
+  if (!d) return;
+  renderProfileCard($('#dp-card'), d.globalName || d.username, d);
+}
+renderLobbyProfile();
+
+$('#discord-login').onclick = async () => {
+  const btn = $('#discord-login');
+  btn.disabled = true;
+  btn.textContent = 'Continue no navegador...';
+  $('#lobby-error').textContent = '';
+  const { ok, user, error } = await api.discordLogin();
+  btn.disabled = false;
+  btn.textContent = 'Entrar com Discord';
+  if (!ok) { $('#lobby-error').textContent = error; return; }
+  state.discord = user;
+  save('discord', JSON.stringify(user));
+  renderLobbyProfile();
+  $('#go').click(); // logou: já entra na sala
+};
+
+function logoutDiscord() {
+  state.discord = null;
+  save('discord', '');
+  renderLobbyProfile();
+  $('#name').focus();
+}
+$('#discord-logout').onclick = logoutDiscord;
+
+// Botão no meu painel da sala: sai da sala e volta pra tela de entrada (o login do Discord continua).
+$('#me-logout').innerHTML = ICON.logout;
+$('#me-logout').onclick = () => {
+  leaveRoom();
+  $('#lobby-error').textContent = '';
+  $('#go').focus();
 };
 
 function enterRoom(name) {
@@ -111,7 +278,7 @@ function enterRoom(name) {
   state.joinedAt = Date.now();
   playSound('join');
 
-  const config = { appId: APP_ID, password: PASSWORD, relayConfig: { redundancy: 8 } };
+  const config = { appId: APP_ID, password: PASSWORD, relayConfig: { redundancy: 8 }, rtcPolyfill: FastStartPeerConnection };
   if (TURN_SERVERS.length) config.turnConfig = TURN_SERVERS;
   const room = joinRoom(config, ROOM_ID, {
     onJoinError: ({ error }) => console.warn('Erro ao conectar com alguém:', error),
@@ -190,7 +357,20 @@ function enterRoom(name) {
 
 function sendHello(target) {
   state.hello?.send(
-    { name: state.myName, joinedAt: state.joinedAt, sharing: !!state.localStream },
+    {
+      name: state.myName,
+      joinedAt: state.joinedAt,
+      sharing: !!state.localStream,
+      discord: state.discord && {
+        id: state.discord.id,
+        username: state.discord.username,
+        avatar: state.discord.avatar,
+        banner: state.discord.banner,
+        accentColor: state.discord.accentColor,
+        decoration: state.discord.decoration,
+        nameplate: state.discord.nameplate,
+      },
+    },
     target ? { target } : undefined,
   );
 }
@@ -570,9 +750,7 @@ function renderLiveCards() {
       <div class="live-name"><b class="pname"></b><span class="live">AO VIVO</span></div>
       <p class="hint">está compartilhando a tela</p>
       <button class="primary">${ICON.play} Assistir</button>`;
-    const avatar = el.querySelector('.avatar');
-    avatar.textContent = nameOf(id)[0].toUpperCase();
-    avatar.style.background = colorFor(nameOf(id));
+    setAvatar(el.querySelector('.avatar'), nameOf(id), peer.discord);
     el.style.setProperty('--c', colorFor(nameOf(id)));
     el.querySelector('.pname').textContent = nameOf(id);
     el.querySelector('button').onclick = () => watch(id);
@@ -602,15 +780,37 @@ function personRow(p) {
     : '<span class="live">AO VIVO</span>';
   li.innerHTML = `<span class="avatar"></span><span class="pname"></span>${badge}`;
   const avatar = li.querySelector('.avatar');
-  avatar.textContent = p.name[0].toUpperCase();
-  avatar.style.background = colorFor(p.name);
+  setAvatar(avatar, p.name, p.discord);
   avatar.classList.toggle('ring', p.sharing);
+  if (!isMe) { // o meu perfil não abre
+    avatar.title = 'Ver perfil';
+    avatar.classList.add('clickable');
+    avatar.onclick = (e) => {
+      e.stopPropagation(); // não liga/desliga o "assistir" da linha
+      openProfile(avatar, p.name, p.discord);
+    };
+  }
   li.querySelector('.pname').textContent = p.name;
+  if (p.discord?.username) li.title = '@' + p.discord.username;
+  const plate = nameplateUrl(p.discord, 'asset.webm');
+  if (plate) {
+    const video = document.createElement('video');
+    video.className = 'nameplate';
+    Object.assign(video, { autoplay: true, loop: true, muted: true, playsInline: true });
+    video.poster = nameplateUrl(p.discord, 'static.png');
+    video.src = plate;
+    video.onerror = () => video.remove();
+    li.classList.add('has-plate');
+    li.prepend(video);
+  }
   li.classList.toggle('is-live', p.sharing);
   if (p.sharing && !isMe) {
     li.classList.add('clickable');
     li.title = watching ? 'Clique pra parar de assistir' : 'Clique pra assistir';
     li.onclick = () => (watching ? unwatch(p.id) : watch(p.id));
+  } else if (!isMe) {
+    li.classList.add('clickable'); // quem não está ao vivo: clicar no nome também abre o perfil
+    li.onclick = () => openProfile(avatar, p.name, p.discord);
   }
   return li;
 }
@@ -619,8 +819,8 @@ function renderPeople() {
   const box = $('#people');
   box.innerHTML = '';
   const everyone = [
-    { id: selfId, name: `${state.myName} (você)`, sharing: !!state.localStream },
-    ...[...state.peers.keys()].map((id) => ({ id, name: nameOf(id), sharing: state.peers.get(id).sharing })),
+    { id: selfId, name: `${state.myName} (você)`, sharing: !!state.localStream, discord: state.discord },
+    ...[...state.peers].map(([id, peer]) => ({ id, name: nameOf(id), sharing: peer.sharing, discord: peer.discord })),
   ];
   // Ao vivo primeiro, depois o resto da sala (como os canais de voz do Discord).
   for (const [title, group] of [['Ao vivo', everyone.filter((p) => p.sharing)], ['Na sala', everyone.filter((p) => !p.sharing)]]) {
@@ -634,9 +834,7 @@ function renderPeople() {
   }
 
   // Meu painel embaixo da barra lateral.
-  const me = $('#me-avatar');
-  me.textContent = state.myName[0]?.toUpperCase() || '?';
-  me.style.background = colorFor(state.myName);
+  setAvatar($('#me-avatar'), state.myName, state.discord);
   $('#me-name').textContent = state.myName;
   const meState = $('#me-state');
   meState.textContent = state.localStream ? `Ao vivo${state.viewers.size ? ` · ${state.viewers.size} assistindo` : ''}` : 'Na sala';
@@ -646,3 +844,7 @@ function renderPeople() {
   renderLiveCards();
   updateEmpty();
 }
+
+// Quem já está logado com o Discord entra direto na sala ao abrir o Telinha
+// (fica aqui no fim pra tudo acima já estar pronto).
+if (state.discord) $('#go').click();

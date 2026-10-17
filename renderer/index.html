@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src ws: wss:; style-src 'self'; script-src 'self'">
+        content="default-src 'self'; img-src 'self' data: https://cdn.discordapp.com; media-src 'self' blob: mediastream: https://cdn.discordapp.com; connect-src ws: wss:; style-src 'self'; script-src 'self'">
   <title>Telinha</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -15,9 +15,19 @@
       <h1>Telinha</h1>
       <p class="sub">Compartilhe a tela com som para até 5 amigos</p>
 
-      <label>Seu nick
-        <input id="name" maxlength="32" placeholder="Como te chamam?" autocomplete="off">
-      </label>
+      <!-- Logado com Discord: mostra o perfil no lugar do campo de nick -->
+      <div id="discord-profile" class="discord-profile" hidden>
+        <div id="dp-card" class="profile-card"></div>
+        <button id="discord-logout" class="link">Sair da conta</button>
+      </div>
+
+      <div id="nick-login">
+        <button id="discord-login" class="discord big">Entrar com Discord</button>
+        <p class="or"><span>ou use um nick</span></p>
+        <label>Seu nick
+          <input id="name" maxlength="32" placeholder="Como te chamam?" autocomplete="off">
+        </label>
+      </div>
 
       <button id="go" class="primary big">Entrar na sala</button>
       <p id="lobby-error" class="error"></p>
@@ -40,6 +50,7 @@
         <div class="me-info">
           <span id="me-avatar" class="avatar"></span>
           <div class="me-text"><b id="me-name"></b><span id="me-state"></span></div>
+          <button id="me-logout" class="me-logout" title="Sair da sala"></button>
         </div>
         <div class="me-actions">
           <button id="change" hidden></button>
@@ -61,6 +72,9 @@
       </div>
     </main>
   </section>
+
+  <!-- Cartão de perfil ao clicar na foto de alguém -->
+  <div id="profile-pop" class="profile-card pop" hidden></div>
 
   <!-- Seletor de tela -->
   <dialog id="picker">
