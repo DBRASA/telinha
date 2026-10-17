@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { execFile, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
 let pending = { id: null, audio: true }; // fonte escolhida no seletor
@@ -109,3 +109,10 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
+
+// Fecha o Radmin VPN junto com o Telinha.
+app.on('will-quit', () => {
+  try {
+    execFileSync('taskkill', ['/F', '/IM', 'RvRvpnGui.exe'], { stdio: 'ignore', windowsHide: true });
+  } catch {} // não estava aberto
+});
