@@ -51,6 +51,46 @@ function checkUpdates(win) {
   autoUpdater.checkForUpdates().catch(() => {});
 }
 
+// Captura de som por programa (sem o Discord / só a janela) via TelinhaAudio.exe.
+// O PCM sai no stdout do auxiliar e vai pro renderer por IPC.
+let audioProc = null;
+
+function stopAppAudio() {
+  audioProc?.kill();
+  audioProc = null;
+}
+
+function startAppAudio(args) {
+  stopAppAudio();
+  const exe = app.isPackaged
+    ? path.join(process.resourcesPath, 'TelinhaAudio.exe')
+    : path.join(__dirname, 'native', 'TelinhaAudio.exe');
+  if (!fs.existsSync(exe)) return Promise.resolve({ ok: false });
+
+  return new Promise((resolve) => {
+    const proc = spawn(exe, args, { windowsHide: true });
+    audioProc = proc;
+    let settled = false;
+    const done = (ok) => {
+      if (!settled) { settled = true; resolve({ ok }); }
+    };
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', (text) => {
+      if (text.includes('READY')) done(true);
+      else console.error('[TelinhaAudio]', text.trim());
+    });
+    proc.stdout.on('data', (chunk) => win?.webContents.send('audio-data', chunk));
+    proc.on('error', () => done(false));
+    proc.on('exit', () => {
+      if (audioProc === proc) audioProc = null;
+      done(false);
+    });
+    setTimeout(() => {
+      if (!settled) { proc.kill(); done(false); }
+    }, 4000);
+  });
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -105,13 +145,17 @@ app.whenReady().then(() => {
     pending = { id, audio: !!audio };
   });
 
+  ipcMain.handle('audio-start', (_e, args) => startAppAudio(args));
+  ipcMain.handle('audio-stop', stopAppAudio);
+
   createWindow();
 });
 
 app.on('window-all-closed', () => app.quit());
 
-// Fecha o Radmin VPN junto com o Telinha.
+// Fecha o Radmin VPN (e a captura de som) junto com o Telinha.
 app.on('will-quit', () => {
+  stopAppAudio();
   try {
     execFileSync('taskkill', ['/F', '/IM', 'RvRvpnGui.exe'], { stdio: 'ignore', windowsHide: true });
   } catch {} // não estava aberto

@@ -197,8 +197,22 @@ document.querySelectorAll('#kind-tabs .tab').forEach((tab) => {
     pickerKind = tab.dataset.kind;
     document.querySelectorAll('#kind-tabs .tab').forEach((t) => t.classList.toggle('active', t === tab));
     renderSources();
+    renderAudioModes();
   };
 });
+
+const AUDIO_MODES = {
+  window: 'Só o som desta janela',
+  'no-discord': 'Som do PC, sem o Discord',
+  all: 'Todo o som do PC',
+  none: 'Sem som',
+};
+
+function renderAudioModes() {
+  const modes = pickerKind === 'window' ? ['window', 'no-discord', 'all', 'none'] : ['no-discord', 'all', 'none'];
+  $('#audio-mode').innerHTML = modes.map((m) => `<option value="${m}">${AUDIO_MODES[m]}</option>`).join('');
+}
+renderAudioModes();
 
 function renderSources() {
   const box = $('#sources');
@@ -231,22 +245,61 @@ $('#picker-go').onclick = () => {
   const quality = $('#quality').value;
   save('quality', quality);
   $('#picker').close();
-  startShare(pickedId, quality, $('#with-audio').checked);
+  startShare(pickedId, quality, $('#audio-mode').value);
 };
 
-async function startShare(sourceId, qualityKey, withAudio) {
+// Som separado por programa (via TelinhaAudio.exe), transformado numa faixa de áudio.
+async function startAppAudio(args) {
+  const { ok } = await api.audioStart(args);
+  if (!ok) return null;
+  try {
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    await ctx.audioWorklet.addModule('pcm-worklet.js');
+    const node = new AudioWorkletNode(ctx, 'pcm-player', { numberOfInputs: 0, outputChannelCount: [2] });
+    const dest = ctx.createMediaStreamDestination();
+    node.connect(dest);
+    api.onAudioData((chunk) => node.port.postMessage(chunk));
+    const [track] = dest.stream.getAudioTracks();
+    return {
+      track,
+      stop: () => {
+        api.onAudioData(null);
+        api.audioStop();
+        ctx.close();
+      },
+    };
+  } catch (e) {
+    console.error(e);
+    api.audioStop();
+    return null;
+  }
+}
+
+async function startShare(sourceId, qualityKey, audioMode) {
   const q = (state.quality = QUALITY[qualityKey]);
-  await api.selectSource(sourceId, withAudio);
+
+  let appAudio = null;
+  if (audioMode === 'no-discord' || audioMode === 'window') {
+    const hwnd = sourceId.split(':')[1]; // "window:<hwnd>:0"
+    appAudio = await startAppAudio(audioMode === 'window' ? ['window', hwnd] : ['exclude-discord']);
+    if (!appAudio) alert('Não deu pra separar o som por programa neste PC. Vou compartilhar todo o som do PC.');
+  }
+  const loopback = audioMode !== 'none' && !appAudio; // todo o som do PC
+
+  await api.selectSource(sourceId, loopback);
   let stream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
       video: { width: { max: q.width }, height: { max: q.height }, frameRate: { ideal: q.fps, max: q.fps } },
-      audio: withAudio,
+      audio: loopback,
     });
   } catch (e) {
+    appAudio?.stop();
     alert('Não foi possível capturar a tela: ' + e.message);
     return;
   }
+  if (appAudio) stream.addTrack(appAudio.track);
+  state.appAudio = appAudio;
 
   const [video] = stream.getVideoTracks();
   video.contentHint = q.fps >= 60 ? 'motion' : 'detail';
@@ -268,6 +321,8 @@ function stopShare() {
   state.room?.removeStream(state.localStream);
   state.localStream.getTracks().forEach((t) => t.stop());
   state.localStream = null;
+  state.appAudio?.stop();
+  state.appAudio = null;
   state.share?.send({ sharing: false });
   removeTile(selfId);
   updateShareButton();

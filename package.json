@@ -1,14 +1,15 @@
 {
   "name": "telinha",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Compartilhamento de tela com som para até 5 amigos",
   "author": "Telinha",
   "main": "main.js",
   "scripts": {
     "build:js": "esbuild src/app.js --bundle --format=iife --target=chrome130 --outfile=renderer/app.js",
     "start": "npm run build:js && electron .",
-    "dist": "npm run build:js && electron-builder --win nsis --publish never",
-    "release": "npm run build:js && electron-builder --win nsis --publish always"
+    "dist": "npm run build:js && npm run build:audio && electron-builder --win nsis --publish never",
+    "release": "npm run build:js && npm run build:audio && electron-builder --win nsis --publish always",
+    "build:audio": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /optimize /platform:x64 /target:exe /out:native\\TelinhaAudio.exe native\\TelinhaAudio.cs"
   },
   "devDependencies": {
     "electron": "33.2.1",
@@ -26,7 +27,7 @@
     ],
     "win": {
       "target": "nsis",
-      "signAndEditExecutable": false
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": true,
@@ -38,7 +39,13 @@
       "owner": "DBRASA",
       "repo": "telinha-releases",
       "releaseType": "release"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "native/TelinhaAudio.exe",
+        "to": "TelinhaAudio.exe"
+      }
+    ]
   },
   "allowScripts": {
     "electron@33.2.1": true,

@@ -2,3 +2,5 @@ node_modules/
 dist/
 # gerado pelo esbuild a partir de src/app.js
 renderer/app.js
+# compilado de native/TelinhaAudio.cs (npm run build:audio)
+native/*.exe
