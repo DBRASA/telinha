@@ -4,6 +4,7 @@ const fs = require('fs');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
+let win = null;
 let pending = { id: null, audio: true }; // fonte escolhida no seletor
 
 // Abre o Radmin VPN junto com o Telinha (se já não estiver aberto).
@@ -92,7 +93,7 @@ function startAppAudio(args) {
 }
 
 function createWindow() {
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
