@@ -137,6 +137,11 @@ label {
     radial-gradient(circle at 85% 90%, rgba(237, 66, 69, .25), transparent 40%),
     var(--darker);
 }
+#lobby { position: relative; }
+.credit, .credit-inline { margin: 0; color: var(--faint); font-size: 12px; }
+.credit b, .credit-inline b { color: var(--muted); font-weight: 600; }
+.credit { position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; }
+.credit-inline { margin-top: 8px; }
 .card {
   width: 400px;
   padding: 36px 32px 24px;

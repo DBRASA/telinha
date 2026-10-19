@@ -252,6 +252,7 @@ const ICON = {
   pip: svg('<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor"/>'),
 };
 $('#my-version').textContent = 'v' + VERSION;
+document.querySelectorAll('.app-version').forEach((el) => { el.textContent = 'v' + VERSION; });
 
 // ---------- Entrada ----------
 $('#name').value = load('name');
@@ -1060,6 +1061,16 @@ function olderThan(a, b) {
   return false;
 }
 
+// A versão mais nova que alguém da sala está usando, se for mais nova que a minha.
+function newestVersion() {
+  let newest = null;
+  for (const peer of state.peers.values()) {
+    const v = peer.version;
+    if (/^\d+\.\d+\.\d+$/.test(v || '') && olderThan(newest || VERSION, v)) newest = v;
+  }
+  return newest;
+}
+
 function personRow(p) {
   const li = document.createElement('li');
   const isMe = p.id === selfId;
@@ -1068,13 +1079,15 @@ function personRow(p) {
     ? '<span class="live watching">ASSISTINDO</span>'
     : '<span class="live">AO VIVO</span>';
   li.innerHTML = `<span class="avatar"></span><span class="pname"></span><span class="pver"></span>${badge}`;
-  // Versão do Telinha de cada um: aparece passando o mouse no nome; quem está atrás da minha
-  // ganha um pontinho amarelo. Até a 2.3.0 o app não mandava a versão.
+  // Versão do Telinha de cada um: aparece passando o mouse no nome. O pontinho amarelo só aparece
+  // na minha própria linha, quando alguém da sala tem uma versão mais nova que a minha
+  // (os outros não veem quem está desatualizado). Até a 2.3.0 o app não mandava a versão.
   const known = /^\d+\.\d+\.\d+$/.test(p.version || '');
   const verText = known ? `Telinha v${p.version}` : 'Telinha antigo (2.3.0 ou anterior)';
   const ver = li.querySelector('.pver');
-  ver.hidden = isMe || (known && !olderThan(p.version, VERSION));
-  ver.title = `${verText} — mais antigo que o seu (v${VERSION}). Atualiza sozinho ao abrir o Telinha de novo.`;
+  const newest = isMe && newestVersion();
+  ver.hidden = !newest;
+  if (newest) ver.title = `Tem Telinha novo (v${newest}). Feche e abra o Telinha pra atualizar.`;
   const avatar = li.querySelector('.avatar');
   setAvatar(avatar, p.name, p.discord);
   avatar.classList.toggle('ring', p.sharing);
@@ -1201,6 +1214,10 @@ $('#set-news').onclick = () => { $('#settings').close(); showNews(); };
 // Aparece uma vez depois de atualizar (quem acabou de instalar não vê). Ao publicar uma versão,
 // é só pôr as novidades dela aqui.
 const CHANGELOG = {
+  '2.4.1': [
+    ['Aviso de atualização', 'um pontinho amarelo no seu nome avisa quando alguém da sala já tem um Telinha mais novo. Só você vê.'],
+    ['Créditos', 'o Telinha agora mostra quem fez: DBRASA.'],
+  ],
   '2.4.0': [
     ['Janela flutuante', 'botão na barra da live pra assistir numa janelinha por cima do jogo.'],
     ['Modo foco', 'clique numa live pra ela ficar grande e as outras pequenas embaixo.'],

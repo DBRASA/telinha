@@ -1,8 +1,8 @@
 {
   "name": "telinha",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Compartilhamento de tela com som para até 5 amigos",
-  "author": "Telinha",
+  "author": "DBRASA",
   "main": "main.js",
   "scripts": {
     "build:js": "esbuild src/app.js --bundle --format=iife --target=chrome130 --outfile=renderer/app.js",
