@@ -1,6 +1,6 @@
 {
   "name": "telinha",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Compartilhamento de tela com som para até 5 amigos",
   "author": "Telinha",
   "main": "main.js",

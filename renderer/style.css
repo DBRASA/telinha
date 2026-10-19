@@ -110,6 +110,10 @@ label {
   position: relative;
 }
 .avatar.big { width: 80px; height: 80px; font-size: 32px; }
+.avatar.mini { width: 24px; height: 24px; font-size: 11px; box-shadow: 0 0 0 2px rgba(0, 0, 0, .6); }
+
+.tile-viewers { display: inline-flex; vertical-align: middle; margin-left: 10px; }
+.tile-viewers .avatar + .avatar { margin-left: -6px; }
 
 .live {
   padding: 2px 6px;
@@ -276,7 +280,7 @@ aside {
 .me-actions { display: flex; gap: 8px; }
 .me-actions button { flex: 1; padding: 10px; font-weight: 600; }
 
-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--dark); }
+main { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--dark); }
 .topbar {
   height: 56px;
   flex: none;
@@ -338,6 +342,44 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; background:
   box-shadow: 0 4px 20px rgba(0, 0, 0, .35);
 }
 .tile.focused { grid-column: 1 / -1; }
+
+/* Modo foco: a live clicada ocupa o palco e as outras ficam pequenas numa fileira embaixo */
+#stage.focus {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+}
+/* 124px = altura de uma live pequena (220px em 16:9) */
+#stage.focus .tile.focused { order: -1; flex: 0 0 100%; height: calc(100% - 124px - 16px); aspect-ratio: auto; }
+#stage.focus .tile:not(.focused) { flex: none; width: 220px; }
+#stage.focus .tile:not(.focused) .tile-stats,
+#stage.focus .tile:not(.focused) .tile-viewers,
+#stage.focus .tile:not(.focused) .tile-bar,
+#stage.focus .tile:not(.focused) .preview-off-msg span { display: none; }
+#stage.focus .tile:not(.focused) .pill { font-size: 11px; padding: 2px 8px 2px 6px; }
+#stage.focus .live-card:not(.focused) .hint,
+#stage.focus .live-card:not(.focused) .glow { display: none; }
+#stage.focus .live-card:not(.focused) .avatar.big { width: 36px; height: 36px; font-size: 15px; margin-bottom: 0; }
+#stage.focus .live-card:not(.focused) button { padding: 4px 12px; font-size: 12px; }
+
+/* Minha prévia escondida */
+.preview-off-msg {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none; /* o clique passa pro vídeo (modo foco, tela cheia) */
+}
+.preview-off-msg .ico { width: 36px; height: 36px; }
+.tile.preview-off .preview-off-msg { display: flex; }
+.tile.preview-off .preview-btn { color: var(--accent); }
 .tile video { width: 100%; height: 100%; object-fit: contain; display: block; cursor: pointer; }
 
 .tile-top { position: absolute; top: 10px; left: 10px; transition: opacity .2s; }
@@ -354,6 +396,32 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; background:
   font-weight: 600;
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); animation: pulse 1.6s infinite; }
+.tile-stats {
+  display: none;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .6);
+  color: #fff;
+  font: 12px/1.5 Consolas, monospace;
+  white-space: pre-line;
+}
+.tile.show-stats .tile-stats:not(:empty) { display: block; width: max-content; max-width: calc(100% - 20px); }
+.tile.show-stats .stats-btn { color: var(--accent); }
+.tile.in-pip .pip { color: var(--accent); }
+
+.pver { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #f0b232; }
+.pver[hidden] { display: none; }
+
+.my-version {
+  position: absolute;
+  right: 12px;
+  bottom: 1px;
+  color: var(--muted);
+  font-size: 11px;
+  opacity: .5;
+  user-select: none;
+}
 
 .tile-bar {
   position: absolute;
@@ -441,6 +509,25 @@ dialog {
   box-shadow: 0 24px 64px rgba(0, 0, 0, .6);
 }
 dialog::backdrop { background: rgba(0, 0, 0, .75); }
+dialog.small { width: 520px; }
+
+/* Configurações */
+.me-settings:hover { color: var(--text); }
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+.settings-grid select, .settings-grid input[type="range"] { margin-top: 6px; }
+input[type="range"] { width: 100%; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
+.field-note { display: block; margin-top: 4px; color: #f0b232; font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0; }
+.field-note.muted { color: var(--muted); }
+label.check { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text); font-size: 14px; font-weight: 500; text-transform: none; letter-spacing: 0; cursor: pointer; }
+label.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+dialog .picker-actions .spacer { flex: 1; }
+
+/* Novidades */
+.news-list { margin: 0; padding: 0; list-style: none; max-height: 60vh; overflow-y: auto; }
+.news-list li { padding: 8px 0; border-bottom: 1px solid var(--hover); font-size: 14px; line-height: 1.4; }
+.news-list li:last-child { border-bottom: 0; }
+.news-list b { color: #fff; }
+.news-list span { color: var(--muted); }
 dialog h3 { margin: 0 0 16px; color: #fff; font-size: 18px; outline: none; }
 #sources {
   display: grid;

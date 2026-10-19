@@ -50,6 +50,7 @@
         <div class="me-info">
           <span id="me-avatar" class="avatar"></span>
           <div class="me-text"><b id="me-name"></b><span id="me-state"></span></div>
+          <button id="me-settings" class="me-logout me-settings" title="Configurações"></button>
           <button id="me-logout" class="me-logout" title="Sair da sala"></button>
         </div>
         <div class="me-actions">
@@ -70,6 +71,7 @@
       <div id="stage">
         <div id="empty"></div>
       </div>
+      <span id="my-version" class="my-version" title="Sua versão do Telinha"></span>
     </main>
   </section>
 
@@ -95,6 +97,12 @@
       <label>Som
         <select id="audio-mode"></select>
       </label>
+      <label>Priorizar
+        <select id="priority">
+          <option value="motion">Movimento (jogos rápidos)</option>
+          <option value="detail" selected>Nitidez (navegador, texto, vídeos)</option>
+        </select>
+      </label>
     </div>
     <div class="picker-actions">
       <button id="picker-cancel">Cancelar</button>
@@ -102,6 +110,51 @@
         <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19 5a10 10 0 0 1 0 14M5 19A10 10 0 0 1 5 5"/></svg>
         Entrar ao vivo
       </button>
+    </div>
+  </dialog>
+
+  <!-- Configurações (engrenagem no meu painel) -->
+  <dialog id="settings" class="small">
+    <h3 tabindex="-1" autofocus>Configurações</h3>
+    <div class="settings-grid">
+      <label>Qualidade padrão
+        <select id="set-quality"></select>
+      </label>
+      <label>Priorizar
+        <select id="set-priority"></select>
+      </label>
+      <label>Atalho da live
+        <select id="set-shortcut"></select>
+        <span id="set-shortcut-note" class="field-note"></span>
+      </label>
+      <label>Volume dos avisos
+        <input id="set-sfx" type="range" min="0" max="100" step="5">
+      </label>
+      <label>Upload da internet
+        <select id="set-upload">
+          <option value="low">Fraco (até 6 Mbps)</option>
+          <option value="normal" selected>Normal (até 12 Mbps)</option>
+          <option value="high">Bom (até 25 Mbps)</option>
+          <option value="off">Sem limite</option>
+        </select>
+        <span class="field-note muted">Com 3+ pessoas assistindo, a live fica mais leve pra caber nisso.</span>
+      </label>
+    </div>
+    <label class="check"><input id="set-hide-preview" type="checkbox"> Esconder minha prévia durante a live</label>
+    <label class="check"><input id="set-stats" type="checkbox"> Mostrar estatísticas por cima das lives</label>
+    <div class="picker-actions">
+      <button id="set-news" class="link">Ver novidades</button>
+      <span class="spacer"></span>
+      <button id="settings-close" class="primary">Fechar</button>
+    </div>
+  </dialog>
+
+  <!-- Novidades da versão (aparece uma vez depois de atualizar) -->
+  <dialog id="news" class="small">
+    <h3 tabindex="-1" autofocus>Novidades do Telinha <span id="news-version"></span></h3>
+    <ul id="news-list" class="news-list"></ul>
+    <div class="picker-actions">
+      <button id="news-close" class="primary">Legal!</button>
     </div>
   </dialog>
 

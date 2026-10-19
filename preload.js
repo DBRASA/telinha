@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 let audioListener = null;
 ipcRenderer.on('audio-data', (_e, chunk) => audioListener?.(chunk));
+let toggleLiveListener = null;
+ipcRenderer.on('toggle-live', () => toggleLiveListener?.());
 
 contextBridge.exposeInMainWorld('telinha', {
   getSources: () => ipcRenderer.invoke('get-sources'),
@@ -10,4 +12,8 @@ contextBridge.exposeInMainWorld('telinha', {
   audioStop: () => ipcRenderer.invoke('audio-stop'),
   onAudioData: (fn) => { audioListener = fn; },
   discordLogin: () => ipcRenderer.invoke('discord-login'),
+  showWindow: () => ipcRenderer.invoke('show-window'),
+  appName: (target) => ipcRenderer.invoke('app-name', target),
+  onToggleLive: (fn) => { toggleLiveListener = fn; },
+  setShortcut: (accel) => ipcRenderer.invoke('set-shortcut', accel),
 });

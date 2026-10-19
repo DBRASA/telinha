@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, dialog, shell, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -12,6 +12,36 @@ const { autoUpdater } = require('electron-updater');
 app.commandLine.appendSwitch('disable-features', 'AllowWgcWindowCapturer');
 
 let win = null;
+
+// Um Telinha só: abrir de novo traz pra frente a janela que já está aberta.
+// No npm start não trava, pra dar pra testar junto com o Telinha instalado.
+// A segunda cópia sai com app.exit (não roda o will-quit, que desligaria o Radmin da primeira).
+const primary = !app.isPackaged || app.requestSingleInstanceLock();
+if (!primary) app.exit(0);
+app.on('second-instance', () => {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
+
+// Atalho global da live: funciona mesmo com o jogo em tela cheia na frente.
+// Quem escolhe é o renderer (Configurações); só aceita as combinações desta lista.
+const SHORTCUTS = ['CommandOrControl+Shift+L', 'CommandOrControl+Shift+K', 'CommandOrControl+Alt+L', 'Alt+F9'];
+let liveShortcut = null;
+
+function setLiveShortcut(accel) {
+  if (liveShortcut) globalShortcut.unregister(liveShortcut);
+  liveShortcut = null;
+  if (!accel) return true; // desligado
+  // Se outro programa já usa a mesma combinação, o atalho só não funciona.
+  if (!globalShortcut.register(accel, () => win?.webContents.send('toggle-live'))) {
+    console.warn(`Atalho ${accel} já está em uso por outro programa.`);
+    return false;
+  }
+  liveShortcut = accel;
+  return true;
+}
 let pending = { id: null, audio: true }; // fonte escolhida no seletor
 
 // Serviço do Radmin que mantém a VPN ligada. O Telinha liga ao abrir e desliga ao fechar
@@ -230,6 +260,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!primary) return;
   // getDisplayMedia no renderer cai aqui; entregamos a fonte escolhida + som do sistema.
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
@@ -265,6 +296,22 @@ app.whenReady().then(() => {
   ipcMain.handle('audio-start', (_e, args) => startAppAudio(args));
   ipcMain.handle('audio-stop', stopAppAudio);
   ipcMain.handle('discord-login', loginDiscord);
+  // Nome do programa que está sendo transmitido ("VALORANT", "Google Chrome"), pra aparecer pros outros.
+  ipcMain.handle('app-name', (_e, target) => new Promise((resolve) => {
+    if (!fs.existsSync(helperExe()) || !/^(\d+|foreground)$/.test(String(target))) return resolve(null);
+    execFile(helperExe(), ['appname', String(target)], { windowsHide: true, timeout: 3000, encoding: 'utf8' }, (err, out) => {
+      if (err || !out.includes('\t')) return resolve(null);
+      const [exe, description] = out.trim().split('\t');
+      resolve({ exe, description });
+    });
+  }));
+  ipcMain.handle('show-window', () => {
+    if (win?.isMinimized()) win.restore();
+    win?.show();
+    win?.focus();
+  });
+
+  ipcMain.handle('set-shortcut', (_e, accel) => (accel === '' || SHORTCUTS.includes(accel) ? setLiveShortcut(accel) : false));
 
   createWindow();
 });
@@ -273,6 +320,8 @@ app.on('window-all-closed', () => app.quit());
 
 // Fecha o Radmin VPN por completo (janela + VPN) e a captura de som junto com o Telinha.
 app.on('will-quit', () => {
+  if (!primary) return;
+  globalShortcut.unregisterAll();
   stopAppAudio();
   try {
     execFileSync('taskkill', ['/F', '/IM', 'RvRvpnGui.exe'], { stdio: 'ignore', windowsHide: true });

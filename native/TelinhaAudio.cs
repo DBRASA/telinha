@@ -4,6 +4,8 @@
 //   TelinhaAudio.exe exclude-discord   -> todo o som, menos o Discord
 //   TelinhaAudio.exe window <hwnd>     -> só o som do programa dessa janela
 //   TelinhaAudio.exe hide <nome>       -> esconde a janela do programa por 10 s (Radmin fica só no ícone do relógio)
+//   TelinhaAudio.exe appname <hwnd|foreground> -> escreve no stdout o nome do programa dessa janela
+//                                       (ou da que está na frente), ex.: "VALORANT", "Google Chrome"
 //
 // Escreve "READY" no stderr quando a captura começou.
 using System;
@@ -119,6 +121,47 @@ static class Program
         }
     }
 
+    [DllImport("user32.dll")]
+    static extern IntPtr GetForegroundWindow();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool QueryFullProcessImageName(IntPtr process, int flags, System.Text.StringBuilder name, ref int size);
+
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr handle);
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    // Nome amigável do programa (descrição do .exe, como o Gerenciador de Tarefas mostra).
+    // Usa QueryFullProcessImageName, que funciona até com jogos protegidos por anti-cheat.
+    // Saída: "<nome do .exe>\t<descrição>", pro Telinha poder ignorar o próprio Telinha, o Explorer etc.
+    static void PrintAppName(string target)
+    {
+        IntPtr hwnd = target == "foreground" ? GetForegroundWindow() : new IntPtr(long.Parse(target));
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        if (pid == 0) return;
+        IntPtr process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (process == IntPtr.Zero) return;
+        try
+        {
+            var path = new System.Text.StringBuilder(1024);
+            int size = path.Capacity;
+            if (!QueryFullProcessImageName(process, 0, path, ref size)) return;
+            string exe = Path.GetFileNameWithoutExtension(path.ToString());
+            string description = "";
+            try { description = (FileVersionInfo.GetVersionInfo(path.ToString()).FileDescription ?? "").Trim(); } catch { }
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.Out.Write(exe + "\t" + description);
+        }
+        finally
+        {
+            CloseHandle(process);
+        }
+    }
+
     [MTAThread]
     static int Main(string[] args)
     {
@@ -126,6 +169,11 @@ static class Program
         {
             uint pid;
             int mode;
+            if (args.Length >= 2 && args[0] == "appname")
+            {
+                PrintAppName(args[1]);
+                return 0;
+            }
             if (args.Length >= 1 && args[0] == "exclude-discord")
             {
                 pid = FindDiscordRoot() ?? (uint)Process.GetCurrentProcess().Id; // sem Discord: exclui só a si mesmo
@@ -144,7 +192,7 @@ static class Program
             }
             else
             {
-                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd> | hide <nome>");
+                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd> | hide <nome> | appname <hwnd|foreground>");
                 return 2;
             }
             Capture(pid, mode);
