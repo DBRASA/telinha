@@ -6,14 +6,30 @@
 //   TelinhaAudio.exe hide <nome>       -> esconde a janela do programa por 10 s (Radmin fica só no ícone do relógio)
 //   TelinhaAudio.exe appname <hwnd|foreground> -> escreve no stdout o nome do programa dessa janela
 //                                       (ou da que está na frente), ex.: "VALORANT", "Google Chrome"
+//   TelinhaAudio.exe radmin-guard <pid> -> pede admin pelo Windows (o aviso "Deseja permitir...?") e abre
+//                                       uma cópia elevada que liga o serviço do Radmin VPN, espera o Telinha
+//                                       (<pid>) fechar e aí fecha o Radmin e desliga o serviço.
+//                                       Sai com 0 se a pessoa aceitou o aviso, 1 se recusou.
 //
 // Escreve "READY" no stderr quando a captura começou.
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.ServiceProcess;
 using System.Threading;
+
+// Informações do arquivo (Propriedades > Detalhes). Um .exe sem nome/empresa/versão é mais suspeito pro antivírus.
+[assembly: AssemblyTitle("Telinha - auxiliar de som")]
+[assembly: AssemblyDescription("Auxiliar do Telinha: captura o som por programa e liga o Radmin VPN")]
+[assembly: AssemblyCompany("DBRASA")]
+[assembly: AssemblyProduct("Telinha")]
+[assembly: AssemblyCopyright("Copyright (c) 2026 DBRASA")]
+[assembly: AssemblyVersion("2.5.2.0")]
+[assembly: AssemblyFileVersion("2.5.2.0")]
+[assembly: AssemblyInformationalVersion("2.5.2")]
 
 static class Program
 {
@@ -121,6 +137,70 @@ static class Program
         }
     }
 
+    const string RADMIN_SERVICE = "RvControlSvc";
+    const string RADMIN_GUI = "RvRvpnGui";
+    const int ERROR_CANCELLED = 1223; // a pessoa clicou "Não" no aviso do Windows
+
+    // Roda sem admin: abre esta mesma exe como admin (aviso normal do Windows), já no modo radmin-guard-run.
+    static int StartRadminGuard(string telinhaPid)
+    {
+        var info = new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName, "radmin-guard-run " + telinhaPid)
+        {
+            UseShellExecute = true,
+            Verb = "runas",
+            WindowStyle = ProcessWindowStyle.Hidden,
+        };
+        try
+        {
+            Process.Start(info);
+            return 0;
+        }
+        catch (System.ComponentModel.Win32Exception e)
+        {
+            if (e.NativeErrorCode != ERROR_CANCELLED) Console.Error.WriteLine("ERRO " + e.Message);
+            return 1;
+        }
+    }
+
+    // Já como admin: liga o serviço, espera o Telinha fechar (ou cair), fecha o Radmin e desliga o serviço.
+    static void RunRadminGuard(int telinhaPid)
+    {
+        Process telinha = null;
+        try { telinha = Process.GetProcessById(telinhaPid); } catch { }
+
+        using (var service = new ServiceController(RADMIN_SERVICE))
+        {
+            try
+            {
+                if (service.Status == ServiceControllerStatus.Stopped) service.Start();
+            }
+            catch { } // serviço não existe ou já está ligando
+
+            if (telinha != null)
+            {
+                try { telinha.WaitForExit(); } catch { }
+            }
+
+            foreach (var p in Process.GetProcessesByName(RADMIN_GUI))
+            {
+                try { p.Kill(); } catch { }
+            }
+            try
+            {
+                service.Refresh();
+                if (service.Status != ServiceControllerStatus.Stopped) service.Stop();
+            }
+            catch { }
+        }
+    }
+
+    // Escreve texto UTF-8 direto no stdout (sem Console.OutputEncoding, que falha num .exe sem console).
+    static void WriteStdout(string text)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        using (var stdout = Console.OpenStandardOutput()) stdout.Write(bytes, 0, bytes.Length);
+    }
+
     [DllImport("user32.dll")]
     static extern IntPtr GetForegroundWindow();
 
@@ -153,8 +233,7 @@ static class Program
             string exe = Path.GetFileNameWithoutExtension(path.ToString());
             string description = "";
             try { description = (FileVersionInfo.GetVersionInfo(path.ToString()).FileDescription ?? "").Trim(); } catch { }
-            Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Console.Out.Write(exe + "\t" + description);
+            WriteStdout(exe + "\t" + description);
         }
         finally
         {
@@ -172,6 +251,15 @@ static class Program
             if (args.Length >= 2 && args[0] == "appname")
             {
                 PrintAppName(args[1]);
+                return 0;
+            }
+            if (args.Length >= 2 && args[0] == "radmin-guard")
+            {
+                return StartRadminGuard(int.Parse(args[1]).ToString());
+            }
+            if (args.Length >= 2 && args[0] == "radmin-guard-run")
+            {
+                RunRadminGuard(int.Parse(args[1]));
                 return 0;
             }
             if (args.Length >= 1 && args[0] == "exclude-discord")
@@ -192,7 +280,7 @@ static class Program
             }
             else
             {
-                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd> | hide <nome> | appname <hwnd|foreground>");
+                Console.Error.WriteLine("uso: TelinhaAudio.exe exclude-discord | window <hwnd> | hide <nome> | appname <hwnd|foreground> | radmin-guard <pid>");
                 return 2;
             }
             Capture(pid, mode);

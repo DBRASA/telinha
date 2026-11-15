@@ -48,21 +48,14 @@ let pending = { id: null, audio: true }; // fonte escolhida no seletor
 const RADMIN_SERVICE = 'RvControlSvc';
 
 // Ligar/desligar o serviço precisa de admin, mas o Telinha não pode rodar como admin (captura).
-// Então abre um PowerShell elevado (um pedido do Windows ao abrir, como antes) que liga o serviço,
-// espera este Telinha fechar (ou cair) e aí fecha o Radmin e desliga o serviço.
-// Resolve true se o PowerShell elevado abriu, false se a pessoa recusou o pedido do Windows.
+// Então o auxiliar (TelinhaAudio.exe radmin-guard) pede admin pelo aviso normal do Windows e abre
+// uma cópia elevada dele mesmo que liga o serviço, espera este Telinha fechar (ou cair) e aí fecha
+// o Radmin e desliga o serviço. (Antes era um PowerShell escondido, que o antivírus confunde com vírus.)
+// Resolve true se a pessoa aceitou o aviso do Windows, false se recusou.
 function radminServiceGuard() {
-  const script = [
-    `sc.exe start ${RADMIN_SERVICE} | Out-Null`,
-    `Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue`,
-    'taskkill.exe /F /IM RvRvpnGui.exe 2>&1 | Out-Null',
-    `sc.exe stop ${RADMIN_SERVICE} | Out-Null`,
-  ].join('; ');
-  const encoded = Buffer.from(script, 'utf16le').toString('base64'); // só [A-Za-z0-9+/=], seguro entre aspas
-  const launcher = "Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList "
-    + `'-NoProfile','-WindowStyle','Hidden','-EncodedCommand','${encoded}'`;
   return new Promise((resolve) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', launcher], { windowsHide: true }, (err) => resolve(!err));
+    if (!fs.existsSync(helperExe())) return resolve(false);
+    execFile(helperExe(), ['radmin-guard', String(process.pid)], { windowsHide: true }, (err) => resolve(!err));
   });
 }
 
@@ -353,7 +346,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => app.quit());
 
 // Fecha o Radmin VPN por completo (janela + VPN) e a captura de som junto com o Telinha.
-// O serviço da VPN quem desliga é o PowerShell elevado do radminServiceGuard, quando este processo sai.
+// O serviço da VPN quem desliga é o auxiliar elevado do radminServiceGuard, quando este processo sai.
 app.on('will-quit', () => {
   if (!primary) return;
   globalShortcut.unregisterAll();

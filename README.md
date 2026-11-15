@@ -13,6 +13,8 @@ npm start
 
 1. Faça as mudanças e teste com `npm start`.
 2. Aumente o `version` no `package.json` (ex.: `2.1.0` → `2.2.0`).
+   Atualize também as 3 linhas `AssemblyVersion`/`AssemblyFileVersion`/`AssemblyInformationalVersion`
+   no topo de `native/TelinhaAudio.cs` (versão que aparece nas Propriedades do auxiliar).
 3. Publique:
 
    ```powershell

@@ -1,6 +1,6 @@
 {
   "name": "telinha",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "description": "Compartilhamento de tela com som para até 5 amigos",
   "author": "DBRASA",
   "main": "main.js",
@@ -9,7 +9,7 @@
     "start": "npm run build:js && electron .",
     "dist": "npm run build:js && npm run build:audio && electron-builder --win nsis --publish never",
     "release": "npm run build:js && npm run build:audio && electron-builder --win nsis --publish always",
-    "build:audio": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /optimize /platform:x64 /target:exe /out:native\\TelinhaAudio.exe native\\TelinhaAudio.cs"
+    "build:audio": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /optimize /platform:x64 /target:winexe /win32icon:native\\TelinhaAudio.ico /r:System.ServiceProcess.dll /out:native\\TelinhaAudio.exe native\\TelinhaAudio.cs"
   },
   "devDependencies": {
     "electron": "45.2.0",
