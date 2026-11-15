@@ -12,7 +12,7 @@
     "build:audio": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /optimize /platform:x64 /target:exe /out:native\\TelinhaAudio.exe native\\TelinhaAudio.cs"
   },
   "devDependencies": {
-    "electron": "33.2.1",
+    "electron": "45.2.0",
     "electron-builder": "25.1.8",
     "esbuild": "0.28.2",
     "trystero": "0.26.0"
@@ -49,7 +49,7 @@
     ]
   },
   "allowScripts": {
-    "electron@33.2.1": true,
+    "electron@45.2.0": true,
     "esbuild@0.28.2": true
   },
   "dependencies": {

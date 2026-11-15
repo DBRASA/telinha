@@ -28,13 +28,28 @@ const AUDIO_BITRATE = 128_000;
 // - Nitidez (navegador): VP8, comprimido no processador, com o modo de tela que vai
 //   refazendo as partes paradas até o texto ficar limpo.
 // Se o PC não tiver o codec, os outros continuam na lista.
+// Cada pessoa assistindo é uma compressão a mais; a partir de HEAVY_VIEWERS, quem entra
+// recebe H.264 mesmo no modo Nitidez, pra não afogar o processador com várias cópias em VP8.
 const CODEC = { motion: 'video/H264', detail: 'video/VP8' };
+const HEAVY_VIEWERS = 3;
+
+// O Chromium só manda o H.264 pra placa de vídeo no perfil High (profile-level-id 64xxxx);
+// no Constrained Baseline (42e01f, o primeiro da lista) ele usa o OpenH264, no processador.
+// Testado numa RX 6800 XT: Baseline → OpenH264; High → MediaFoundation (AMDh264Encoder).
+// Só põe o High na frente se este PC consegue enviar High (senão a negociação cai pro VP8).
+const isH264High = (c) => c.mimeType === 'video/H264' && /profile-level-id=64/i.test(c.sdpFmtpLine || '')
+  && /packetization-mode=1/.test(c.sdpFmtpLine || '');
+const canSendH264High = () => !!RTCRtpSender.getCapabilities?.('video')?.codecs.some(isH264High);
 
 function preferCodec(pc) {
   const codecs = RTCRtpReceiver.getCapabilities?.('video')?.codecs;
-  const mime = CODEC[state.priority];
+  const mime = state.viewers.size >= HEAVY_VIEWERS ? CODEC.motion : CODEC[state.priority];
   if (!codecs || !codecs.some((c) => c.mimeType === mime)) return;
-  const order = [...codecs.filter((c) => c.mimeType === mime), ...codecs.filter((c) => c.mimeType !== mime)];
+  const rank = (c) => {
+    if (c.mimeType !== mime) return 2;
+    return mime === 'video/H264' && canSendH264High() && isH264High(c) ? 0 : 1;
+  };
+  const order = [...codecs].sort((a, b) => rank(a) - rank(b)); // sort estável: mantém a ordem dentro de cada grupo
   for (const t of pc.getTransceivers()) {
     // Só as transceivers que enviam o meu vídeo; quem assiste aceita o codec de quem transmite.
     if (t.sender.track?.kind !== 'video' || t.stopped) continue;
@@ -45,8 +60,10 @@ function preferCodec(pc) {
 // O WebRTC começa toda conexão mandando ~300 kbps e sobe aos poucos enquanto mede a internet,
 // por isso a live começava borrada. Estes valores (em kbps) vão na negociação de cada conexão
 // e fazem o vídeo já sair em boa qualidade; se a internet não aguentar, ele ainda desce sozinho.
+// O mínimo fica baixo de propósito: com piso alto, numa internet apertada o vídeo congelava
+// em vez de só ficar mais leve.
 const START_KBPS = 3000;
-const MIN_KBPS = 800;
+const MIN_KBPS = 300;
 
 function boostVideoSdp(sdp) {
   const lines = sdp.split(/\r?\n/);
@@ -751,18 +768,31 @@ function stopShare() {
 // Cada pessoa assistindo é uma cópia a mais do vídeo no meu upload. O limite de upload
 // (Configurações) é dividido entre elas: com 1–2 pessoas nada muda; com mais, cada cópia fica
 // mais leve e o WebRTC baixa resolução ou fps sozinho, conforme o "Priorizar" da live.
+// A soma nunca passa do limite: antes cada cópia tinha um piso, e com muita gente o upload estourava.
 const UPLOAD = { low: 6_000_000, normal: 12_000_000, high: 25_000_000, off: Infinity };
 
 function videoBitrate() {
   const budget = UPLOAD[load('upload')] ?? UPLOAD.normal;
   const perViewer = Math.floor(budget / Math.max(1, state.viewers.size));
-  return Math.min(state.quality.bitrate, Math.max(MIN_KBPS * 1000, perViewer));
+  return Math.min(state.quality.bitrate, perViewer);
+}
+
+// No modo Movimento, com pouco bitrate por cópia, já manda numa resolução menor
+// (1080p → 720p → 540p) em vez de deixar o compressor sofrendo em 1080p e engasgando.
+// No modo Nitidez a resolução fica, pro texto continuar legível; ali o que cai é o fps.
+function videoScale(bitrate) {
+  if (state.priority === 'detail') return 1;
+  const ratio = state.quality.bitrate / bitrate;
+  if (ratio >= 4) return 2;
+  if (ratio >= 2) return 1.5;
+  return 1;
 }
 
 // Ajusta a qualidade de envio em cada conexão (inclusive de quem entrou depois).
 function applyBitrate() {
   if (!state.localStream || !state.room) return;
   const video = videoBitrate();
+  const scale = videoScale(video);
   const mine = new Set(state.localStream.getTracks());
   for (const pc of Object.values(state.room.getPeers())) {
     for (const sender of pc.getSenders()) {
@@ -772,9 +802,12 @@ function applyBitrate() {
       if (!enc) continue;
       const isVideo = sender.track.kind === 'video';
       const bitrate = isVideo ? video : AUDIO_BITRATE;
-      if (enc.maxBitrate === bitrate) continue;
+      if (enc.maxBitrate === bitrate && (!isVideo || enc.scaleResolutionDownBy === scale)) continue;
       enc.maxBitrate = bitrate;
-      if (isVideo) enc.maxFramerate = state.quality.fps;
+      if (isVideo) {
+        enc.maxFramerate = state.quality.fps;
+        enc.scaleResolutionDownBy = scale;
+      }
       sender.setParameters(params).catch(() => {});
     }
   }
@@ -972,6 +1005,9 @@ async function videoStats(peerId, pc, type) {
   if (prev && now.t > prev.t) parts.push(mbps(((now.bytes - prev.bytes) * 8 * 1000) / (now.t - prev.t)));
   const codec = report.get(rtp.codecId)?.mimeType?.split('/')[1];
   if (codec) parts.push(codec);
+  // Onde a imagem é comprimida (quem transmite) ou descomprimida (quem assiste).
+  const hw = inbound ? rtp.powerEfficientDecoder : rtp.powerEfficientEncoder;
+  if (hw != null) parts.push(hw ? 'na placa de vídeo' : 'no processador');
   if (inbound) {
     const got = prev ? now.packets - prev.packets : 0;
     const lost = prev ? now.lost - prev.lost : 0;
@@ -984,7 +1020,22 @@ async function videoStats(peerId, pc, type) {
       parts.push(`limitado pelo ${LIMIT[rtp.qualityLimitationReason] || rtp.qualityLimitationReason}`);
     }
   }
+  const route = routeOf(report, pair);
+  if (route) parts.push(route);
   return parts.join(' · ');
+}
+
+// Por onde a conexão passa: pela rede do Radmin (26.x.x.x), por um servidor TURN ou direto pela internet.
+// Se o Radmin não conseguir ligar dois PCs direto, ele retransmite pelos servidores dele, que são lentos;
+// nesse caso o ícone da pessoa no Radmin aparece como "relay".
+function routeOf(report, pair) {
+  if (!pair) return null;
+  const local = report.get(pair.localCandidateId);
+  const remote = report.get(pair.remoteCandidateId);
+  if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') return 'via TURN';
+  const isRadmin = (c) => /^26\./.test(c?.address || c?.ip || '');
+  if (isRadmin(local) || isRadmin(remote)) return 'via Radmin';
+  return 'direto';
 }
 
 async function updateStats() {
