@@ -6,10 +6,10 @@ const crypto = require('crypto');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
-// A captura de janela pelo Windows Graphics Capture falha ("Could not start video source");
-// desligando só ela, o Chromium usa o capturador clássico de janelas, que funciona.
-// A captura da tela inteira continua igual.
-app.commandLine.appendSwitch('disable-features', 'AllowWgcWindowCapturer');
+// O Telinha roda SEM administrador: o Chromium do Electron 45 captura tela e janelas pelo
+// Windows Graphics Capture, que nega acesso a processo elevado (E_ACCESSDENIED →
+// "Could not start video source") e não tem mais opção pra trocar de capturador.
+// Só o serviço do Radmin precisa de admin; ver radminServiceGuard.
 
 let win = null;
 
@@ -44,9 +44,40 @@ function setLiveShortcut(accel) {
 }
 let pending = { id: null, audio: true }; // fonte escolhida no seletor
 
-// Serviço do Radmin que mantém a VPN ligada. O Telinha liga ao abrir e desliga ao fechar
-// (por isso o app roda como administrador: requestedExecutionLevel no package.json).
+// Serviço do Radmin que mantém a VPN ligada. O Telinha liga ao abrir e desliga ao fechar.
 const RADMIN_SERVICE = 'RvControlSvc';
+
+// Ligar/desligar o serviço precisa de admin, mas o Telinha não pode rodar como admin (captura).
+// Então abre um PowerShell elevado (um pedido do Windows ao abrir, como antes) que liga o serviço,
+// espera este Telinha fechar (ou cair) e aí fecha o Radmin e desliga o serviço.
+// Resolve true se o PowerShell elevado abriu, false se a pessoa recusou o pedido do Windows.
+function radminServiceGuard() {
+  const script = [
+    `sc.exe start ${RADMIN_SERVICE} | Out-Null`,
+    `Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue`,
+    'taskkill.exe /F /IM RvRvpnGui.exe 2>&1 | Out-Null',
+    `sc.exe stop ${RADMIN_SERVICE} | Out-Null`,
+  ].join('; ');
+  const encoded = Buffer.from(script, 'utf16le').toString('base64'); // só [A-Za-z0-9+/=], seguro entre aspas
+  const launcher = "Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList "
+    + `'-NoProfile','-WindowStyle','Hidden','-EncodedCommand','${encoded}'`;
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', launcher], { windowsHide: true }, (err) => resolve(!err));
+  });
+}
+
+// Espera o serviço ficar "RUNNING" (consultar não precisa de admin), até timeoutMs.
+async function waitServiceRunning(timeoutMs) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const running = await new Promise((resolve) => {
+      execFile('sc', ['query', RADMIN_SERVICE], { windowsHide: true }, (err, out) => resolve(!err && /RUNNING/.test(out)));
+    });
+    if (running) return true;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
 
 // Auxiliar nativo (native/TelinhaAudio.cs): som por programa e esconder a janela do Radmin.
 const helperExe = () => (app.isPackaged
@@ -73,17 +104,20 @@ function openRadmin(win) {
     return;
   }
 
-  // "sc start" falha sem problema se o serviço já estiver rodando.
-  execFile('sc', ['start', RADMIN_SERVICE], { windowsHide: true }, () => {
-    execFile('tasklist', ['/FI', 'IMAGENAME eq RvRvpnGui.exe', '/NH'], (err, out) => {
-      if (!err && out.includes('RvRvpnGui.exe')) return; // já está aberto
-      spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
-      // O Radmin sempre abre a janela na frente; o auxiliar esconde ela (fica o ícone perto do relógio).
-      if (fs.existsSync(helperExe())) {
-        spawn(helperExe(), ['hide', 'RvRvpnGui'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      }
+  // "sc start" falha sem problema se o serviço já estiver rodando. Se a pessoa recusar o pedido
+  // do Windows, o Radmin abre mesmo assim (funciona se o serviço já estiver ligado).
+  radminServiceGuard()
+    .then((ok) => ok && waitServiceRunning(10_000))
+    .then(() => {
+      execFile('tasklist', ['/FI', 'IMAGENAME eq RvRvpnGui.exe', '/NH'], (err, out) => {
+        if (!err && out.includes('RvRvpnGui.exe')) return; // já está aberto
+        spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+        // O Radmin sempre abre a janela na frente; o auxiliar esconde ela (fica o ícone perto do relógio).
+        if (fs.existsSync(helperExe())) {
+          spawn(helperExe(), ['hide', 'RvRvpnGui'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        }
+      });
     });
-  });
 }
 
 // Procura versão nova no GitHub, baixa em segundo plano e pergunta se quer reiniciar.
@@ -319,14 +353,12 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => app.quit());
 
 // Fecha o Radmin VPN por completo (janela + VPN) e a captura de som junto com o Telinha.
+// O serviço da VPN quem desliga é o PowerShell elevado do radminServiceGuard, quando este processo sai.
 app.on('will-quit', () => {
   if (!primary) return;
   globalShortcut.unregisterAll();
   stopAppAudio();
   try {
     execFileSync('taskkill', ['/F', '/IM', 'RvRvpnGui.exe'], { stdio: 'ignore', windowsHide: true });
-  } catch {} // não estava aberto
-  try {
-    execFileSync('sc', ['stop', RADMIN_SERVICE], { stdio: 'ignore', windowsHide: true });
-  } catch {} // já parado (ou sem permissão de administrador)
+  } catch {} // não estava aberto (ou foi aberto como admin; aí o guard fecha)
 });

@@ -1,6 +1,6 @@
 {
   "name": "telinha",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Compartilhamento de tela com som para até 5 amigos",
   "author": "DBRASA",
   "main": "main.js",
@@ -27,8 +27,7 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.png",
-      "requestedExecutionLevel": "requireAdministrator"
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": true,
